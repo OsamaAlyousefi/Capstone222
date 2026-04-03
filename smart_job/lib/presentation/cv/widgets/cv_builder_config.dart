@@ -3,10 +3,20 @@ import 'package:lucide_icons/lucide_icons.dart';
 
 import '../../../domain/models/profile.dart';
 
+enum CvTemplateLayout {
+  classic,
+  minimal,
+  creative,
+  compact,
+  techSidebar,
+  executive,
+}
+
 class CvTemplateOption {
   const CvTemplateOption({
     required this.title,
     required this.caption,
+    required this.layout,
     required this.background,
     required this.headerBackground,
     required this.sectionBackground,
@@ -16,10 +26,13 @@ class CvTemplateOption {
     required this.previewBar,
     required this.borderColor,
     required this.textColor,
+    required this.defaultAccentColor,
+    required this.defaultFontFamily,
   });
 
   final String title;
   final String caption;
+  final CvTemplateLayout layout;
   final Color background;
   final Color headerBackground;
   final Color sectionBackground;
@@ -29,6 +42,8 @@ class CvTemplateOption {
   final Color previewBar;
   final Color borderColor;
   final Color textColor;
+  final Color defaultAccentColor;
+  final String defaultFontFamily;
 }
 
 class CvSectionConfig {
@@ -215,6 +230,7 @@ const List<CvTemplateOption> cvTemplateOptions = [
   CvTemplateOption(
     title: 'Classic Black & White Professional',
     caption: 'Structured, timeless, ATS-friendly',
+    layout: CvTemplateLayout.classic,
     background: Color(0xFFF8F8F5),
     headerBackground: Colors.white,
     sectionBackground: Color(0xFFF0F0EA),
@@ -224,10 +240,13 @@ const List<CvTemplateOption> cvTemplateOptions = [
     previewBar: Color(0xFFD9D9D2),
     borderColor: Color(0xFFD9D7CF),
     textColor: Color(0xFF151515),
+    defaultAccentColor: Color(0xFF1F1F1F),
+    defaultFontFamily: 'Inter',
   ),
   CvTemplateOption(
     title: 'Modern Minimal',
     caption: 'Quiet spacing and crisp hierarchy',
+    layout: CvTemplateLayout.minimal,
     background: Color(0xFFF5F7FA),
     headerBackground: Color(0xFFFFFFFF),
     sectionBackground: Color(0xFFEAF0F6),
@@ -237,10 +256,13 @@ const List<CvTemplateOption> cvTemplateOptions = [
     previewBar: Color(0xFFD6E3EF),
     borderColor: Color(0xFFD9E1E8),
     textColor: Color(0xFF173042),
+    defaultAccentColor: Color(0xFF3B5C7A),
+    defaultFontFamily: 'Poppins',
   ),
   CvTemplateOption(
     title: 'Creative Soft Accent',
     caption: 'Warm editorial feel with gentle accents',
+    layout: CvTemplateLayout.creative,
     background: Color(0xFFFBF5EE),
     headerBackground: Color(0xFFFFFBF7),
     sectionBackground: Color(0xFFF5EADF),
@@ -250,10 +272,13 @@ const List<CvTemplateOption> cvTemplateOptions = [
     previewBar: Color(0xFFEFD7CF),
     borderColor: Color(0xFFE5D4C6),
     textColor: Color(0xFF463026),
+    defaultAccentColor: Color(0xFFC97666),
+    defaultFontFamily: 'Playfair Display',
   ),
   CvTemplateOption(
     title: 'Compact One-Page',
     caption: 'Dense, concise, optimized for speed',
+    layout: CvTemplateLayout.compact,
     background: Color(0xFFF4F5F0),
     headerBackground: Color(0xFFFBFBF8),
     sectionBackground: Color(0xFFE8ECDF),
@@ -263,10 +288,13 @@ const List<CvTemplateOption> cvTemplateOptions = [
     previewBar: Color(0xFFD7E0CF),
     borderColor: Color(0xFFD9DED1),
     textColor: Color(0xFF283126),
+    defaultAccentColor: Color(0xFF58724E),
+    defaultFontFamily: 'Roboto',
   ),
   CvTemplateOption(
-    title: 'Tech/Developer Style',
-    caption: 'Confident, modern, code-forward layout',
+    title: 'Tech Sidebar',
+    caption: 'Code-forward split layout with a bold sidebar',
+    layout: CvTemplateLayout.techSidebar,
     background: Color(0xFF111B2B),
     headerBackground: Color(0xFF162334),
     sectionBackground: Color(0xFF1A2B40),
@@ -276,6 +304,23 @@ const List<CvTemplateOption> cvTemplateOptions = [
     previewBar: Color(0xFF2B415F),
     borderColor: Color(0xFF29415A),
     textColor: Color(0xFFF4F7FA),
+    defaultAccentColor: Color(0xFF5D8CC3),
+    defaultFontFamily: 'Inter',
+  ),
+  CvTemplateOption(
+    title: 'Executive Elegant',
+    caption: 'Refined serif hierarchy for senior-looking polish',
+    layout: CvTemplateLayout.executive,
+    background: Color(0xFFF7F1EC),
+    headerBackground: Color(0xFFFFFCFA),
+    sectionBackground: Color(0xFFEEE3D8),
+    chipBackground: Color(0xFFE6D6C7),
+    previewCanvas: Color(0xFFFFFCFA),
+    previewAccent: Color(0xFF8A6A45),
+    previewBar: Color(0xFFE2D2C0),
+    borderColor: Color(0xFFE7D8CB),
+    textColor: Color(0xFF35261C),
+    defaultAccentColor: Color(0xFF8A6A45),
+    defaultFontFamily: 'Playfair Display',
   ),
 ];
-

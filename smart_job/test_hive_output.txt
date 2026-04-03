@@ -1,0 +1,7 @@
+00:00 +0: loading C:/dev/Capstone222/smart_job/test/widget_test.dart
+00:00 +0: shows SmartJob login shell on launch
+14:36 +0 -1: shows SmartJob login shell on launch [E]
+  TimeoutException after 0:10:00.000000: Test timed out after 10 minutes.
+  dart:isolate  _RawReceivePort._handleMessage
+  
+14:36 +0 -1: Some tests failed.

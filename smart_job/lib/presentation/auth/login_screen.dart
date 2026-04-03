@@ -6,6 +6,9 @@ import 'package:lucide_icons/lucide_icons.dart';
 
 import '../../application/controllers/auth_controller.dart';
 import '../../application/controllers/smart_job_controller.dart';
+import '../../data/local/local_smart_job_repository.dart';
+import '../../data/remote/smart_job_remote_sync.dart';
+import '../../data/repositories/smart_job_repository.dart';
 import '../../router/app_router.dart';
 import '../../theme/app_colors.dart';
 import '../shared/widgets/smart_job_ui.dart';
@@ -22,6 +25,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
   final _emailController = TextEditingController();
   final _passwordController = TextEditingController();
   bool _obscurePassword = true;
+  bool _isSubmitting = false;
 
   @override
   void dispose() {
@@ -30,12 +34,32 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
     super.dispose();
   }
 
-  void _submit() {
-    if (!(_formKey.currentState?.validate() ?? false)) {
+  Future<void> _submit() async {
+    if (!(_formKey.currentState?.validate() ?? false) || _isSubmitting) {
       return;
     }
 
+    FocusScope.of(context).unfocus();
+    setState(() => _isSubmitting = true);
+
     final email = _emailController.text.trim().toLowerCase();
+    final repository = ref.read(smartJobRepositoryProvider);
+    final remoteSync = ref.read(smartJobRemoteSyncProvider);
+
+    if (remoteSync != null && repository is LocalSmartJobRepository) {
+      try {
+        final remoteAccount = await remoteSync.fetchAccount(email);
+        if (remoteAccount != null) {
+          repository.cacheRemoteAccount(remoteAccount);
+        }
+      } catch (_) {
+        // Fall back to local storage if cloud sync is unavailable.
+      }
+    }
+
+    if (!mounted) {
+      return;
+    }
 
     ref.read(authControllerProvider.notifier).signIn(email);
     ref.read(smartJobControllerProvider.notifier).loadAccountForLogin(email);
@@ -43,6 +67,8 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
         .read(smartJobControllerProvider)
         .profile
         .hasCompletedOnboarding;
+
+    setState(() => _isSubmitting = false);
     context.go(
       hasCompletedOnboarding ? AppRoute.main : AppRoute.onboarding,
     );
@@ -141,12 +167,12 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
             ),
             const SizedBox(height: 24),
             ElevatedButton(
-              onPressed: _submit,
-              child: const Text('Login'),
+              onPressed: _isSubmitting ? null : _submit,
+              child: Text(_isSubmitting ? 'Logging in...' : 'Login'),
             ),
             const SizedBox(height: 12),
             OutlinedButton(
-              onPressed: () => context.go(AppRoute.register),
+              onPressed: _isSubmitting ? null : () => context.go(AppRoute.register),
               child: const Text('Create account'),
             ),
           ],

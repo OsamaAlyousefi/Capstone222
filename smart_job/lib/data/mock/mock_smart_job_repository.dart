@@ -64,6 +64,7 @@ class MockSmartJobRepository {
       phoneNumber: '+971 50 555 2044',
       location: 'Dubai, UAE',
       headline: 'Mobile Product Designer turning research into polished apps',
+      tagline: 'Flutter Developer seeking internships',
       photoLabel: 'MA',
       smartInboxAlias: 'maya@inbox.smartjob.app',
       hasCompletedOnboarding: false,
@@ -92,17 +93,27 @@ class MockSmartJobRepository {
         'Portfolio microsite with case studies and motion prototypes.',
       ],
       languages: const ['English', 'Arabic'],
-      links: const ['linkedin.com/in/maya', 'behance.net/maya'],
+      links: const ['linkedin.com/in/maya', 'github.com/maya-smartjob'],
       awards: const ['Dean list recognition for product systems project'],
       volunteerWork: const ['Mentored first-year students in mobile prototyping'],
       interests: const ['Human-centered AI', 'Editorial layouts', 'Mentorship'],
+      linkedInUrl: 'linkedin.com/in/maya',
+      portfolioUrl: 'github.com/maya-smartjob',
+      websiteUrl: 'mayaalmansoori.dev',
       jobPreferences: const JobPreferences(
         targetRoles: ['Flutter Developer', 'Product Designer'],
         preferredLocations: ['Dubai', 'Remote', 'Abu Dhabi'],
         preferredWorkModes: [WorkMode.remote, WorkMode.hybrid],
+        preferredJobTypes: [JobType.internship, JobType.fullTime, JobType.partTime],
         preferredLevels: [ExperienceLevel.junior, ExperienceLevel.mid],
-        salaryRange: '\$3k-\$6k / month',
+        salaryRange: '\$4k-\$6k / month',
+        salaryExpectation: 6,
         wantsNotifications: true,
+        emailFrequency: AlertFrequency.daily,
+        pushNotificationsEnabled: true,
+        emailNotificationsEnabled: true,
+        hasWorkAuthorization: true,
+        openToRelocation: true,
       ),
       cvInsight: const CvInsight(
         fileName: 'No CV uploaded yet',
@@ -125,10 +136,17 @@ class MockSmartJobRepository {
         selectedTemplate: 'Classic Black & White Professional',
         parsedSummary:
             'AI parsing will extract role history, skills, and achievements after upload.',
+        remoteStoragePath: '',
+        accentColorHex: '#5D8CC3',
+        fontFamily: 'Inter',
+        sectionOrder: defaultCvSectionOrder,
+        lastEditedAtIso: '',
       ),
       themeMode: ThemeMode.system,
       notificationsEnabled: true,
       privacyModeEnabled: false,
+      publicProfileEnabled: true,
+      hideContactInfo: false,
     );
   }
 
@@ -148,6 +166,7 @@ class MockSmartJobRepository {
       phoneNumber: '',
       location: '',
       headline: 'Build a student-ready CV and job search system.',
+      tagline: 'SmartJob candidate workspace',
       photoLabel: _initialsFromName(resolvedName),
       smartInboxAlias: '${email.split('@').first}@inbox.smartjob.app',
       hasCompletedOnboarding: false,
@@ -162,6 +181,9 @@ class MockSmartJobRepository {
       awards: const [],
       volunteerWork: const [],
       interests: const [],
+      linkedInUrl: '',
+      portfolioUrl: '',
+      websiteUrl: '',
       cvInsight: const CvInsight(
         fileName: 'SmartJob_CV_Draft.pdf',
         lastUpdatedLabel: 'Draft ready to build',
@@ -191,6 +213,11 @@ class MockSmartJobRepository {
         selectedTemplate: 'Classic Black & White Professional',
         parsedSummary:
             'Your SmartJob CV draft is ready. Add sections to improve ATS strength and recruiter trust.',
+        remoteStoragePath: '',
+        accentColorHex: '#5D8CC3',
+        fontFamily: 'Inter',
+        sectionOrder: defaultCvSectionOrder,
+        lastEditedAtIso: '',
       ),
       themeMode: themeMode ?? ThemeMode.system,
     );
@@ -547,3 +574,9 @@ class MockSmartJobRepository {
     ];
   }
 }
+
+
+
+
+
+

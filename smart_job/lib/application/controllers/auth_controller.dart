@@ -1,5 +1,7 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../data/repositories/smart_job_repository.dart';
+
 class AuthState {
   const AuthState({
     required this.isAuthenticated,
@@ -24,13 +26,24 @@ class AuthState {
 
 class AuthController extends Notifier<AuthState> {
   @override
-  AuthState build() => AuthState.signedOut();
+  AuthState build() {
+    final repository = ref.read(smartJobRepositoryProvider);
+    final email = repository.currentSessionEmail();
+    if (email == null) {
+      return AuthState.signedOut();
+    }
+    return AuthState(isAuthenticated: true, userEmail: email);
+  }
 
   void signIn(String email) {
+    final repository = ref.read(smartJobRepositoryProvider);
+    repository.saveCurrentSessionEmail(email);
     state = AuthState(isAuthenticated: true, userEmail: email);
   }
 
   void signOut() {
+    final repository = ref.read(smartJobRepositoryProvider);
+    repository.clearCurrentSession();
     state = AuthState.signedOut();
   }
 }

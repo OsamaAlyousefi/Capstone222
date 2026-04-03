@@ -1,3 +1,5 @@
+import 'dart:typed_data';
+
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_animate/flutter_animate.dart';
@@ -6,6 +8,7 @@ import 'package:go_router/go_router.dart';
 import 'package:lucide_icons/lucide_icons.dart';
 
 import '../../application/controllers/smart_job_controller.dart';
+import '../../data/remote/smart_job_remote_sync.dart';
 import '../../router/app_router.dart';
 import '../../theme/app_colors.dart';
 import '../shared/widgets/smart_job_ui.dart';
@@ -21,9 +24,9 @@ class OnboardingScreen extends ConsumerStatefulWidget {
 
 class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
   _CvMode _cvMode = _CvMode.upload;
-  String? _selectedFileName;
-  String? _selectedFileSizeLabel;
+  PlatformFile? _selectedFile;
   bool _isPickingFile = false;
+  bool _isUploading = false;
 
   late final List<String> _selectedRoles;
   late final List<String> _selectedLocations;
@@ -44,6 +47,8 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
   Widget build(BuildContext context) {
     final textTheme = Theme.of(context).textTheme;
     final isUpload = _cvMode == _CvMode.upload;
+    final remoteSync = ref.watch(smartJobRemoteSyncProvider);
+    final hasCloudUpload = remoteSync != null;
 
     return Scaffold(
       body: SmartJobBackground(
@@ -70,7 +75,9 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
                       ).animate().fade().slideY(begin: 0.04),
                       const SizedBox(height: 12),
                       Text(
-                        'The preferences screen has been removed. Pick a real CV file from your device, or open the builder and finish your resume inside SmartJob.',
+                        hasCloudUpload
+                            ? 'Pick a real CV file from your device and SmartJob will upload it to cloud storage, sync it to your account, and keep your local workspace updated.'
+                            : 'The preferences screen has been removed. Pick a real CV file from your device, or open the builder and finish your resume inside SmartJob. Cloud upload will switch on automatically when Supabase keys are configured.',
                         textAlign: TextAlign.center,
                         style: textTheme.bodyLarge?.copyWith(
                           color: AppColors.subtext(Theme.of(context).brightness),
@@ -86,8 +93,9 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
                   final uploadCard = _ModeCard(
                     icon: LucideIcons.uploadCloud,
                     title: 'Upload my CV',
-                    subtitle:
-                        'Choose a real PDF, DOC, or DOCX file from your device and bring it into SmartJob.',
+                    subtitle: hasCloudUpload
+                        ? 'Choose a real PDF, DOC, or DOCX file and upload it into SmartJob cloud storage.'
+                        : 'Choose a real PDF, DOC, or DOCX file from your device and connect it locally now.',
                     selected: isUpload,
                     onTap: () => setState(() => _cvMode = _CvMode.upload),
                   );
@@ -122,14 +130,26 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
               const SizedBox(height: 20),
               AnimatedSwitcher(
                 duration: const Duration(milliseconds: 220),
-                child: isUpload ? _buildUploadPanel(context) : _buildBuilderPanel(),
+                child: isUpload
+                    ? _buildUploadPanel(context, hasCloudUpload: hasCloudUpload)
+                    : _buildBuilderPanel(),
               ),
               const SizedBox(height: 24),
               ElevatedButton(
                 onPressed: isUpload
-                    ? (_selectedFileName == null ? null : _finishUploadFlow)
+                    ? (_selectedFile == null || _isPickingFile || _isUploading
+                        ? null
+                        : _finishUploadFlow)
                     : _finishBuilderFlow,
-                child: Text(isUpload ? 'Finish upload' : 'Open CV builder'),
+                child: Text(
+                  isUpload
+                      ? _isUploading
+                          ? 'Uploading CV...'
+                          : hasCloudUpload
+                              ? 'Upload CV and continue'
+                              : 'Finish upload'
+                      : 'Open CV builder',
+                ),
               ),
             ],
           ),
@@ -138,31 +158,35 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
     );
   }
 
-  Widget _buildUploadPanel(BuildContext context) {
+  Widget _buildUploadPanel(
+    BuildContext context, {
+    required bool hasCloudUpload,
+  }) {
     final textTheme = Theme.of(context).textTheme;
+    final selectedFileName = _selectedFile?.name;
+    final selectedFileSize = _selectedFile?.size == null ? null : _formatFileSize(_selectedFile?.size ?? 0);
 
     return SmartJobPanel(
       key: const ValueKey('real-upload-panel'),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const SmartJobSectionHeader(
-            title: 'Real CV upload',
-            subtitle: 'Pick a real file from your device. Supported formats: PDF, DOC, and DOCX.',
+          SmartJobSectionHeader(
+            title: hasCloudUpload ? 'Real CV upload' : 'Real CV connection',
+            subtitle: hasCloudUpload
+                ? 'Pick a real file from your device. Supported formats: PDF, DOC, and DOCX. SmartJob will upload it to your backend storage.'
+                : 'Pick a real file from your device. Supported formats: PDF, DOC, and DOCX. SmartJob will connect it locally until cloud storage is configured.',
           ),
           const SizedBox(height: 16),
           OutlinedButton.icon(
-            onPressed: _isPickingFile ? null : _pickCvFile,
-            icon: Icon(
-              LucideIcons.folderSearch2,
-            ),
+            onPressed: _isPickingFile || _isUploading ? null : _pickCvFile,
+            icon: const Icon(LucideIcons.folderSearch2),
             label: Text(
-              _selectedFileName == null
-                  ? (_isPickingFile ? 'Opening file picker...' : 'Choose CV file')
-                  : _selectedFileName!,
+              selectedFileName ??
+                  (_isPickingFile ? 'Opening file picker...' : 'Choose CV file'),
             ),
           ),
-          if (_selectedFileName != null) ...[
+          if (selectedFileName != null) ...[
             const SizedBox(height: 16),
             Wrap(
               spacing: 10,
@@ -170,15 +194,20 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
               children: [
                 SmartJobMetricPill(
                   label: 'file',
-                  value: _selectedFileName!,
+                  value: selectedFileName,
                   icon: LucideIcons.fileText,
                 ),
-                if (_selectedFileSizeLabel != null)
+                if (selectedFileSize != null)
                   SmartJobMetricPill(
                     label: 'size',
-                    value: _selectedFileSizeLabel!,
+                    value: selectedFileSize,
                     icon: LucideIcons.hardDrive,
                   ),
+                SmartJobMetricPill(
+                  label: 'storage',
+                  value: hasCloudUpload ? 'Cloud sync on' : 'Local only',
+                  icon: hasCloudUpload ? LucideIcons.uploadCloud : LucideIcons.laptop,
+                ),
               ],
             ),
             const SizedBox(height: 16),
@@ -195,7 +224,9 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
                   const SizedBox(width: 12),
                   Expanded(
                     child: Text(
-                      'CV file connected successfully. SmartJob will use $_selectedFileName as your uploaded resume entry and keep the upload state in your account.',
+                      hasCloudUpload
+                          ? 'CV file selected successfully. SmartJob will upload $selectedFileName to your backend storage as soon as you continue.'
+                          : 'CV file connected successfully. SmartJob will use $selectedFileName as your uploaded resume entry now, and cloud upload will be available once Supabase is configured.',
                       style: textTheme.bodyMedium,
                     ),
                   ),
@@ -268,8 +299,8 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
       }
 
       final hasBytes = selectedFile.bytes != null && selectedFile.bytes!.isNotEmpty;
-      final hasPath = selectedFile.path != null && selectedFile.path!.isNotEmpty;
-      if (!hasBytes && !hasPath) {
+      final hasStream = selectedFile.readStream != null;
+      if (!hasBytes && !hasStream) {
         setState(() => _isPickingFile = false);
         _showMessage('SmartJob could not read that file. Please choose another CV.');
         return;
@@ -277,8 +308,7 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
 
       setState(() {
         _cvMode = _CvMode.upload;
-        _selectedFileName = selectedFile.name;
-        _selectedFileSizeLabel = _formatFileSize(selectedFile.size);
+        _selectedFile = selectedFile;
         _isPickingFile = false;
       });
     } catch (_) {
@@ -300,13 +330,73 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
     return '$sizeInBytes B';
   }
 
-  void _finishUploadFlow() {
-    ref.read(smartJobControllerProvider.notifier).completeOnboardingFromUpload(
-          fileName: _selectedFileName!,
-          targetRoles: _selectedRoles,
-          preferredLocations: _selectedLocations,
+  Future<void> _finishUploadFlow() async {
+    final selectedFile = _selectedFile;
+    if (selectedFile == null || _isUploading) {
+      return;
+    }
+
+    setState(() => _isUploading = true);
+
+    final remoteSync = ref.read(smartJobRemoteSyncProvider);
+    var remoteStoragePath = '';
+
+    try {
+      if (remoteSync != null) {
+        final bytes = await _readSelectedFileBytes(selectedFile);
+        if (bytes == null || bytes.isEmpty) {
+          _showMessage('SmartJob could not read that file for upload. Please choose another CV.');
+          return;
+        }
+
+        final email = ref.read(smartJobControllerProvider).profile.email;
+        remoteStoragePath = await remoteSync.uploadCv(
+          email: email,
+          fileName: selectedFile.name,
+          bytes: bytes,
         );
-    context.go(AppRoute.main);
+      }
+
+      if (!mounted) {
+        return;
+      }
+
+      ref.read(smartJobControllerProvider.notifier).completeOnboardingFromUpload(
+            fileName: selectedFile.name,
+            targetRoles: _selectedRoles,
+            preferredLocations: _selectedLocations,
+            remoteStoragePath: remoteStoragePath,
+          );
+      context.go(AppRoute.main);
+    } catch (_) {
+      if (!mounted) {
+        return;
+      }
+      _showMessage('Uploading your CV failed. Please try again.');
+    } finally {
+      if (mounted) {
+        setState(() => _isUploading = false);
+      }
+    }
+  }
+
+  Future<Uint8List?> _readSelectedFileBytes(PlatformFile file) async {
+    final bytes = file.bytes;
+    if (bytes != null && bytes.isNotEmpty) {
+      return bytes;
+    }
+
+    final stream = file.readStream;
+    if (stream == null) {
+      return null;
+    }
+
+    final builder = BytesBuilder(copy: false);
+    await for (final chunk in stream) {
+      builder.add(chunk);
+    }
+    final streamedBytes = builder.takeBytes();
+    return streamedBytes.isEmpty ? null : streamedBytes;
   }
 
   void _finishBuilderFlow() {

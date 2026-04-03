@@ -1,4 +1,3 @@
-import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:google_fonts/google_fonts.dart';
@@ -9,9 +8,19 @@ import 'package:smart_job/main.dart';
 import 'test_support/in_memory_smart_job_repository.dart';
 
 void main() {
-  testWidgets('shows SmartJob login shell on launch', (WidgetTester tester) async {
+  testWidgets('restores a persisted signed-in session on launch', (WidgetTester tester) async {
     GoogleFonts.config.allowRuntimeFetching = false;
     final repository = InMemorySmartJobRepository();
+    final account = repository.createAccount(
+      fullName: 'Session User',
+      email: 'session@example.com',
+    );
+    repository.saveAccount(
+      account.copyWith(
+        profile: account.profile.copyWith(hasCompletedOnboarding: true),
+      ),
+    );
+    repository.saveCurrentSessionEmail('session@example.com');
 
     await tester.pumpWidget(
       ProviderScope(
@@ -24,11 +33,9 @@ void main() {
 
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 300));
+    await tester.pump(const Duration(milliseconds: 300));
 
-    expect(find.widgetWithText(ElevatedButton, 'Login'), findsOneWidget);
-    expect(
-      find.text('Find jobs faster. Apply smarter. Track everything in one place.'),
-      findsOneWidget,
-    );
+    expect(find.textContaining('Welcome back'), findsOneWidget);
+    expect(find.text('Jobs feed'), findsOneWidget);
   });
 }

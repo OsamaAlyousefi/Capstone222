@@ -1,22 +1,25 @@
-import 'dart:convert';
+import 'dart:async';
 
 import 'package:flutter/material.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../domain/models/application.dart';
 import '../../domain/models/job.dart';
 import '../../domain/models/message.dart';
 import '../../domain/models/profile.dart';
+import '../database/smart_job_database.dart';
 import '../mock/mock_smart_job_repository.dart';
+import '../remote/smart_job_remote_sync.dart';
 import '../repositories/smart_job_repository.dart';
 
 class LocalSmartJobRepository implements SmartJobRepository {
-  LocalSmartJobRepository(this._prefs);
+  LocalSmartJobRepository(
+    this._database, {
+    SmartJobRemoteSync? remoteSync,
+  }) : _remoteSync = remoteSync;
 
-  final SharedPreferences _prefs;
+  final SmartJobDatabase _database;
+  final SmartJobRemoteSync? _remoteSync;
   final MockSmartJobRepository _seedRepository = const MockSmartJobRepository();
-
-  static const _accountsKey = 'smart_job.accounts.v1';
 
   @override
   SmartJobAccountData initialAccount({ThemeMode themeMode = ThemeMode.system}) {
@@ -36,8 +39,7 @@ class LocalSmartJobRepository implements SmartJobRepository {
     ThemeMode? themeMode,
   }) {
     final normalizedEmail = _normalizeEmail(email);
-    final accounts = _readAccounts();
-    final stored = accounts[normalizedEmail];
+    final stored = _database.readAccount(normalizedEmail);
     if (stored != null) {
       return _accountFromMap(stored);
     }
@@ -71,19 +73,46 @@ class LocalSmartJobRepository implements SmartJobRepository {
     SmartJobAccountData account, {
     String? previousEmail,
   }) {
-    final accounts = _readAccounts();
+    final normalizedAccount = _normalizedAccount(account);
+    final normalizedCurrentEmail = normalizedAccount.profile.email;
+    final accountMap = _accountToMap(normalizedAccount);
+
     if (previousEmail != null) {
-      accounts.remove(_normalizeEmail(previousEmail));
+      final normalizedPreviousEmail = _normalizeEmail(previousEmail);
+      if (normalizedPreviousEmail != normalizedCurrentEmail) {
+        _database.deleteAccount(normalizedPreviousEmail);
+        unawaited(_deleteAccountFromRemote(normalizedPreviousEmail));
+      }
     }
-    accounts[_normalizeEmail(account.profile.email)] = _accountToMap(account);
-    _writeAccounts(accounts);
+
+    _database.writeAccount(normalizedCurrentEmail, accountMap);
+    unawaited(_pushAccountToRemote(normalizedAccount, accountMap));
   }
 
   @override
   void deleteAccount(String email) {
-    final accounts = _readAccounts();
-    accounts.remove(_normalizeEmail(email));
-    _writeAccounts(accounts);
+    final normalizedEmail = _normalizeEmail(email);
+    _database.deleteAccount(normalizedEmail);
+    unawaited(_deleteAccountFromRemote(normalizedEmail));
+  }
+
+  @override
+  String? currentSessionEmail() => _database.currentSessionEmail();
+
+  @override
+  void saveCurrentSessionEmail(String email) {
+    _database.saveCurrentSessionEmail(email);
+  }
+
+  @override
+  void clearCurrentSession() {
+    _database.clearCurrentSession();
+  }
+
+  SmartJobAccountData cacheRemoteAccount(Map<String, dynamic> accountMap) {
+    final account = _normalizedAccount(_accountFromMap(accountMap));
+    _database.writeAccount(account.profile.email, _accountToMap(account));
+    return account;
   }
 
   SmartJobAccountData _newAccountData({
@@ -99,7 +128,8 @@ class LocalSmartJobRepository implements SmartJobRepository {
           email: email,
           phoneNumber: '',
           location: '',
-          headline: 'Build a student-ready CV and job search system.',
+          headline: 'Flutter developer building polished, recruiter-ready product experiences.',
+          tagline: 'SmartJob candidate workspace',
           photoLabel: _initialsFromName(resolvedName),
           smartInboxAlias: '${email.split('@').first}@inbox.smartjob.app',
           hasCompletedOnboarding: false,
@@ -114,6 +144,9 @@ class LocalSmartJobRepository implements SmartJobRepository {
           awards: const [],
           volunteerWork: const [],
           interests: const [],
+          linkedInUrl: '',
+          portfolioUrl: '',
+          websiteUrl: '',
           themeMode: themeMode ?? ThemeMode.system,
           cvInsight: const CvInsight(
             fileName: 'SmartJob_CV_Draft.pdf',
@@ -136,6 +169,11 @@ class LocalSmartJobRepository implements SmartJobRepository {
             selectedTemplate: 'Classic Black & White Professional',
             parsedSummary:
                 'Your SmartJob CV draft is ready. Add sections to improve ATS strength and recruiter trust.',
+            remoteStoragePath: '',
+            accentColorHex: '#5D8CC3',
+            fontFamily: 'Inter',
+            sectionOrder: defaultCvSectionOrder,
+            lastEditedAtIso: '',
           ),
         );
 
@@ -147,21 +185,46 @@ class LocalSmartJobRepository implements SmartJobRepository {
     );
   }
 
-  Map<String, dynamic> _readAccounts() {
-    final raw = _prefs.getString(_accountsKey);
-    if (raw == null || raw.isEmpty) {
-      return <String, dynamic>{};
+  Future<void> _pushAccountToRemote(
+    SmartJobAccountData account,
+    Map<String, dynamic> accountMap,
+  ) async {
+    if (_remoteSync == null) {
+      return;
     }
 
-    final decoded = jsonDecode(raw);
-    if (decoded is! Map<String, dynamic>) {
-      return <String, dynamic>{};
+    try {
+      await _remoteSync.pushAccount(
+        email: account.profile.email,
+        fullName: account.profile.fullName,
+        accountData: accountMap,
+      );
+    } catch (_) {
+      // Keep the app usable offline even if remote sync is unavailable.
     }
-    return decoded;
   }
 
-  void _writeAccounts(Map<String, dynamic> accounts) {
-    _prefs.setString(_accountsKey, jsonEncode(accounts));
+  Future<void> _deleteAccountFromRemote(String email) async {
+    if (_remoteSync == null) {
+      return;
+    }
+
+    try {
+      await _remoteSync.deleteAccount(email);
+    } catch (_) {
+      // Local deletion should still succeed if remote cleanup fails.
+    }
+  }
+
+  SmartJobAccountData _normalizedAccount(SmartJobAccountData account) {
+    final normalizedEmail = _normalizeEmail(account.profile.email);
+    if (normalizedEmail == account.profile.email) {
+      return account;
+    }
+
+    return account.copyWith(
+      profile: account.profile.copyWith(email: normalizedEmail),
+    );
   }
 
   Map<String, dynamic> _accountToMap(SmartJobAccountData account) {
@@ -195,6 +258,7 @@ class LocalSmartJobRepository implements SmartJobRepository {
       'phoneNumber': profile.phoneNumber,
       'location': profile.location,
       'headline': profile.headline,
+      'tagline': profile.tagline,
       'photoLabel': profile.photoLabel,
       'smartInboxAlias': profile.smartInboxAlias,
       'hasCompletedOnboarding': profile.hasCompletedOnboarding,
@@ -209,17 +273,29 @@ class LocalSmartJobRepository implements SmartJobRepository {
       'awards': profile.awards,
       'volunteerWork': profile.volunteerWork,
       'interests': profile.interests,
+      'linkedInUrl': profile.linkedInUrl,
+      'portfolioUrl': profile.portfolioUrl,
+      'websiteUrl': profile.websiteUrl,
       'jobPreferences': {
         'targetRoles': profile.jobPreferences.targetRoles,
         'preferredLocations': profile.jobPreferences.preferredLocations,
         'preferredWorkModes': profile.jobPreferences.preferredWorkModes
             .map((mode) => mode.name)
             .toList(),
+        'preferredJobTypes': profile.jobPreferences.preferredJobTypes
+            .map((jobType) => jobType.name)
+            .toList(),
         'preferredLevels': profile.jobPreferences.preferredLevels
             .map((level) => level.name)
             .toList(),
         'salaryRange': profile.jobPreferences.salaryRange,
+        'salaryExpectation': profile.jobPreferences.salaryExpectation,
         'wantsNotifications': profile.jobPreferences.wantsNotifications,
+        'emailFrequency': profile.jobPreferences.emailFrequency.name,
+        'pushNotificationsEnabled': profile.jobPreferences.pushNotificationsEnabled,
+        'emailNotificationsEnabled': profile.jobPreferences.emailNotificationsEnabled,
+        'hasWorkAuthorization': profile.jobPreferences.hasWorkAuthorization,
+        'openToRelocation': profile.jobPreferences.openToRelocation,
       },
       'cvInsight': {
         'fileName': profile.cvInsight.fileName,
@@ -233,16 +309,25 @@ class LocalSmartJobRepository implements SmartJobRepository {
         'highlightedStrengths': profile.cvInsight.highlightedStrengths,
         'selectedTemplate': profile.cvInsight.selectedTemplate,
         'parsedSummary': profile.cvInsight.parsedSummary,
+        'remoteStoragePath': profile.cvInsight.remoteStoragePath,
+        'accentColorHex': profile.cvInsight.accentColorHex,
+        'fontFamily': profile.cvInsight.fontFamily,
+        'sectionOrder': profile.cvInsight.sectionOrder,
+        'lastEditedAtIso': profile.cvInsight.lastEditedAtIso,
       },
       'themeMode': _themeModeToString(profile.themeMode),
       'notificationsEnabled': profile.notificationsEnabled,
       'privacyModeEnabled': profile.privacyModeEnabled,
+      'publicProfileEnabled': profile.publicProfileEnabled,
+      'hideContactInfo': profile.hideContactInfo,
     };
   }
 
   UserProfile _profileFromMap(Map<String, dynamic> map) {
-    final jobPreferences = map['jobPreferences'] as Map<String, dynamic>;
-    final cvInsight = map['cvInsight'] as Map<String, dynamic>;
+    final jobPreferences = map['jobPreferences'] as Map<String, dynamic>? ?? const {};
+    final cvInsight = map['cvInsight'] as Map<String, dynamic>? ?? const {};
+
+    final decodedSectionOrder = _stringList(cvInsight['sectionOrder']);
 
     return UserProfile(
       fullName: map['fullName'] as String? ?? '',
@@ -250,6 +335,7 @@ class LocalSmartJobRepository implements SmartJobRepository {
       phoneNumber: map['phoneNumber'] as String? ?? '',
       location: map['location'] as String? ?? '',
       headline: map['headline'] as String? ?? '',
+      tagline: map['tagline'] as String? ?? '',
       photoLabel: map['photoLabel'] as String? ?? 'SJ',
       smartInboxAlias: map['smartInboxAlias'] as String? ?? '',
       hasCompletedOnboarding: map['hasCompletedOnboarding'] as bool? ?? false,
@@ -264,17 +350,31 @@ class LocalSmartJobRepository implements SmartJobRepository {
       awards: _stringList(map['awards']),
       volunteerWork: _stringList(map['volunteerWork']),
       interests: _stringList(map['interests']),
+      linkedInUrl: map['linkedInUrl'] as String? ?? '',
+      portfolioUrl: map['portfolioUrl'] as String? ?? '',
+      websiteUrl: map['websiteUrl'] as String? ?? '',
       jobPreferences: JobPreferences(
         targetRoles: _stringList(jobPreferences['targetRoles']),
         preferredLocations: _stringList(jobPreferences['preferredLocations']),
         preferredWorkModes: (jobPreferences['preferredWorkModes'] as List<dynamic>? ?? const [])
             .map((mode) => WorkMode.values.byName(mode as String))
             .toList(),
+        preferredJobTypes: (jobPreferences['preferredJobTypes'] as List<dynamic>? ?? const [])
+            .map((jobType) => JobType.values.byName(jobType as String))
+            .toList(),
         preferredLevels: (jobPreferences['preferredLevels'] as List<dynamic>? ?? const [])
             .map((level) => ExperienceLevel.values.byName(level as String))
             .toList(),
         salaryRange: jobPreferences['salaryRange'] as String? ?? '',
+        salaryExpectation: jobPreferences['salaryExpectation'] as int? ?? 6,
         wantsNotifications: jobPreferences['wantsNotifications'] as bool? ?? true,
+        emailFrequency: AlertFrequency.values.byName(
+          jobPreferences['emailFrequency'] as String? ?? AlertFrequency.daily.name,
+        ),
+        pushNotificationsEnabled: jobPreferences['pushNotificationsEnabled'] as bool? ?? true,
+        emailNotificationsEnabled: jobPreferences['emailNotificationsEnabled'] as bool? ?? true,
+        hasWorkAuthorization: jobPreferences['hasWorkAuthorization'] as bool? ?? true,
+        openToRelocation: jobPreferences['openToRelocation'] as bool? ?? true,
       ),
       cvInsight: CvInsight(
         fileName: cvInsight['fileName'] as String? ?? 'SmartJob_CV_Draft.pdf',
@@ -289,10 +389,18 @@ class LocalSmartJobRepository implements SmartJobRepository {
         selectedTemplate:
             cvInsight['selectedTemplate'] as String? ?? 'Classic Black & White Professional',
         parsedSummary: cvInsight['parsedSummary'] as String? ?? '',
+        remoteStoragePath: cvInsight['remoteStoragePath'] as String? ?? '',
+        accentColorHex: cvInsight['accentColorHex'] as String? ?? '#5D8CC3',
+        fontFamily: cvInsight['fontFamily'] as String? ?? 'Inter',
+        sectionOrder:
+            decodedSectionOrder.isEmpty ? defaultCvSectionOrder : decodedSectionOrder,
+        lastEditedAtIso: cvInsight['lastEditedAtIso'] as String? ?? '',
       ),
       themeMode: _themeModeFromString(map['themeMode'] as String?),
       notificationsEnabled: map['notificationsEnabled'] as bool? ?? true,
       privacyModeEnabled: map['privacyModeEnabled'] as bool? ?? false,
+      publicProfileEnabled: map['publicProfileEnabled'] as bool? ?? true,
+      hideContactInfo: map['hideContactInfo'] as bool? ?? false,
     );
   }
 
@@ -446,7 +554,7 @@ class LocalSmartJobRepository implements SmartJobRepository {
     };
   }
 
-  String _normalizeEmail(String email) => email.trim().toLowerCase();
+  String _normalizeEmail(String email) => _database.normalizeEmail(email);
 
   String _nameFromEmail(String email) {
     final localPart = email.split('@').first.replaceAll(RegExp(r'[._-]+'), ' ');
@@ -462,3 +570,5 @@ class LocalSmartJobRepository implements SmartJobRepository {
     return parts.map((part) => part[0].toUpperCase()).join();
   }
 }
+
+

@@ -55,6 +55,12 @@ abstract class SmartJobRepository {
   });
 
   void deleteAccount(String email);
+
+  String? currentSessionEmail();
+
+  void saveCurrentSessionEmail(String email);
+
+  void clearCurrentSession();
 }
 
 final smartJobRepositoryProvider = Provider<SmartJobRepository>(

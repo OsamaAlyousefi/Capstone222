@@ -6,7 +6,7 @@ import '../application/controllers/smart_job_controller.dart';
 import '../presentation/applications/applications_screen.dart';
 import '../presentation/auth/login_screen.dart';
 import '../presentation/auth/register_screen.dart';
-import '../presentation/cv/cv_screen.dart';
+import '../presentation/cv/cv_page.dart';
 import '../presentation/cv/cv_setup_screen.dart';
 import '../presentation/home/home_screen.dart';
 import '../presentation/inbox/inbox_screen.dart';

@@ -2,6 +2,14 @@ import 'package:flutter/material.dart';
 
 import 'job.dart';
 
+const List<String> defaultCvSectionOrder = [
+  'summary',
+  'skills',
+  'experience',
+  'education',
+  'projects',
+];
+
 class CvInsight {
   const CvInsight({
     required this.fileName,
@@ -15,6 +23,11 @@ class CvInsight {
     required this.highlightedStrengths,
     required this.selectedTemplate,
     required this.parsedSummary,
+    required this.remoteStoragePath,
+    required this.accentColorHex,
+    required this.fontFamily,
+    required this.sectionOrder,
+    required this.lastEditedAtIso,
   });
 
   final String fileName;
@@ -28,6 +41,11 @@ class CvInsight {
   final List<String> highlightedStrengths;
   final String selectedTemplate;
   final String parsedSummary;
+  final String remoteStoragePath;
+  final String accentColorHex;
+  final String fontFamily;
+  final List<String> sectionOrder;
+  final String lastEditedAtIso;
 
   CvInsight copyWith({
     String? fileName,
@@ -41,6 +59,11 @@ class CvInsight {
     List<String>? highlightedStrengths,
     String? selectedTemplate,
     String? parsedSummary,
+    String? remoteStoragePath,
+    String? accentColorHex,
+    String? fontFamily,
+    List<String>? sectionOrder,
+    String? lastEditedAtIso,
   }) {
     return CvInsight(
       fileName: fileName ?? this.fileName,
@@ -51,10 +74,14 @@ class CvInsight {
       missingSections: missingSections ?? this.missingSections,
       improvementTips: improvementTips ?? this.improvementTips,
       missingKeywords: missingKeywords ?? this.missingKeywords,
-      highlightedStrengths:
-          highlightedStrengths ?? this.highlightedStrengths,
+      highlightedStrengths: highlightedStrengths ?? this.highlightedStrengths,
       selectedTemplate: selectedTemplate ?? this.selectedTemplate,
       parsedSummary: parsedSummary ?? this.parsedSummary,
+      remoteStoragePath: remoteStoragePath ?? this.remoteStoragePath,
+      accentColorHex: accentColorHex ?? this.accentColorHex,
+      fontFamily: fontFamily ?? this.fontFamily,
+      sectionOrder: sectionOrder ?? this.sectionOrder,
+      lastEditedAtIso: lastEditedAtIso ?? this.lastEditedAtIso,
     );
   }
 }
@@ -99,38 +126,71 @@ extension CvCollectionSectionX on CvCollectionSection {
   }
 }
 
+enum AlertFrequency { instant, daily, weekly }
+
 class JobPreferences {
   const JobPreferences({
     required this.targetRoles,
     required this.preferredLocations,
     required this.preferredWorkModes,
+    required this.preferredJobTypes,
     required this.preferredLevels,
     required this.salaryRange,
+    required this.salaryExpectation,
     required this.wantsNotifications,
+    required this.emailFrequency,
+    required this.pushNotificationsEnabled,
+    required this.emailNotificationsEnabled,
+    required this.hasWorkAuthorization,
+    required this.openToRelocation,
   });
 
   final List<String> targetRoles;
   final List<String> preferredLocations;
   final List<WorkMode> preferredWorkModes;
+  final List<JobType> preferredJobTypes;
   final List<ExperienceLevel> preferredLevels;
   final String salaryRange;
+  final int salaryExpectation;
   final bool wantsNotifications;
+  final AlertFrequency emailFrequency;
+  final bool pushNotificationsEnabled;
+  final bool emailNotificationsEnabled;
+  final bool hasWorkAuthorization;
+  final bool openToRelocation;
 
   JobPreferences copyWith({
     List<String>? targetRoles,
     List<String>? preferredLocations,
     List<WorkMode>? preferredWorkModes,
+    List<JobType>? preferredJobTypes,
     List<ExperienceLevel>? preferredLevels,
     String? salaryRange,
+    int? salaryExpectation,
     bool? wantsNotifications,
+    AlertFrequency? emailFrequency,
+    bool? pushNotificationsEnabled,
+    bool? emailNotificationsEnabled,
+    bool? hasWorkAuthorization,
+    bool? openToRelocation,
   }) {
     return JobPreferences(
       targetRoles: targetRoles ?? this.targetRoles,
       preferredLocations: preferredLocations ?? this.preferredLocations,
       preferredWorkModes: preferredWorkModes ?? this.preferredWorkModes,
+      preferredJobTypes: preferredJobTypes ?? this.preferredJobTypes,
       preferredLevels: preferredLevels ?? this.preferredLevels,
       salaryRange: salaryRange ?? this.salaryRange,
+      salaryExpectation: salaryExpectation ?? this.salaryExpectation,
       wantsNotifications: wantsNotifications ?? this.wantsNotifications,
+      emailFrequency: emailFrequency ?? this.emailFrequency,
+      pushNotificationsEnabled:
+          pushNotificationsEnabled ?? this.pushNotificationsEnabled,
+      emailNotificationsEnabled:
+          emailNotificationsEnabled ?? this.emailNotificationsEnabled,
+      hasWorkAuthorization:
+          hasWorkAuthorization ?? this.hasWorkAuthorization,
+      openToRelocation: openToRelocation ?? this.openToRelocation,
     );
   }
 }
@@ -142,6 +202,7 @@ class UserProfile {
     required this.phoneNumber,
     required this.location,
     required this.headline,
+    required this.tagline,
     required this.photoLabel,
     required this.smartInboxAlias,
     required this.hasCompletedOnboarding,
@@ -156,11 +217,16 @@ class UserProfile {
     required this.awards,
     required this.volunteerWork,
     required this.interests,
+    required this.linkedInUrl,
+    required this.portfolioUrl,
+    required this.websiteUrl,
     required this.jobPreferences,
     required this.cvInsight,
     required this.themeMode,
     required this.notificationsEnabled,
     required this.privacyModeEnabled,
+    required this.publicProfileEnabled,
+    required this.hideContactInfo,
   });
 
   final String fullName;
@@ -168,6 +234,7 @@ class UserProfile {
   final String phoneNumber;
   final String location;
   final String headline;
+  final String tagline;
   final String photoLabel;
   final String smartInboxAlias;
   final bool hasCompletedOnboarding;
@@ -182,11 +249,16 @@ class UserProfile {
   final List<String> awards;
   final List<String> volunteerWork;
   final List<String> interests;
+  final String linkedInUrl;
+  final String portfolioUrl;
+  final String websiteUrl;
   final JobPreferences jobPreferences;
   final CvInsight cvInsight;
   final ThemeMode themeMode;
   final bool notificationsEnabled;
   final bool privacyModeEnabled;
+  final bool publicProfileEnabled;
+  final bool hideContactInfo;
 
   String get firstName {
     final trimmed = fullName.trim();
@@ -246,6 +318,7 @@ class UserProfile {
     String? phoneNumber,
     String? location,
     String? headline,
+    String? tagline,
     String? photoLabel,
     String? smartInboxAlias,
     bool? hasCompletedOnboarding,
@@ -260,11 +333,16 @@ class UserProfile {
     List<String>? awards,
     List<String>? volunteerWork,
     List<String>? interests,
+    String? linkedInUrl,
+    String? portfolioUrl,
+    String? websiteUrl,
     JobPreferences? jobPreferences,
     CvInsight? cvInsight,
     ThemeMode? themeMode,
     bool? notificationsEnabled,
     bool? privacyModeEnabled,
+    bool? publicProfileEnabled,
+    bool? hideContactInfo,
   }) {
     return UserProfile(
       fullName: fullName ?? this.fullName,
@@ -272,6 +350,7 @@ class UserProfile {
       phoneNumber: phoneNumber ?? this.phoneNumber,
       location: location ?? this.location,
       headline: headline ?? this.headline,
+      tagline: tagline ?? this.tagline,
       photoLabel: photoLabel ?? this.photoLabel,
       smartInboxAlias: smartInboxAlias ?? this.smartInboxAlias,
       hasCompletedOnboarding:
@@ -287,11 +366,16 @@ class UserProfile {
       awards: awards ?? this.awards,
       volunteerWork: volunteerWork ?? this.volunteerWork,
       interests: interests ?? this.interests,
+      linkedInUrl: linkedInUrl ?? this.linkedInUrl,
+      portfolioUrl: portfolioUrl ?? this.portfolioUrl,
+      websiteUrl: websiteUrl ?? this.websiteUrl,
       jobPreferences: jobPreferences ?? this.jobPreferences,
       cvInsight: cvInsight ?? this.cvInsight,
       themeMode: themeMode ?? this.themeMode,
       notificationsEnabled: notificationsEnabled ?? this.notificationsEnabled,
       privacyModeEnabled: privacyModeEnabled ?? this.privacyModeEnabled,
+      publicProfileEnabled: publicProfileEnabled ?? this.publicProfileEnabled,
+      hideContactInfo: hideContactInfo ?? this.hideContactInfo,
     );
   }
 }

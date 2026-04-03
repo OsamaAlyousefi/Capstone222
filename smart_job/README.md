@@ -1,16 +1,23 @@
 # smart_job
 
-A new Flutter project.
+SmartJob is a Flutter job-search app with a local Hive database, optional Supabase account sync, and real CV file upload support.
 
-## Getting Started
+## Backend setup
 
-This project is a starting point for a Flutter application.
+SmartJob runs in local-only mode by default. To enable the remote backend, create the table and storage bucket in Supabase with [supabase/schema.sql](supabase/schema.sql), then launch the app with Dart defines:
 
-A few resources to get you started if this is your first Flutter project:
+```bash
+flutter run \
+  --dart-define=SUPABASE_URL=your-project-url \
+  --dart-define=SUPABASE_ANON_KEY=your-anon-key
+```
 
-- [Lab: Write your first Flutter app](https://docs.flutter.dev/get-started/codelab)
-- [Cookbook: Useful Flutter samples](https://docs.flutter.dev/cookbook)
+## What syncs
 
-For help getting started with Flutter development, view the
-[online documentation](https://docs.flutter.dev/), which offers tutorials,
-samples, guidance on mobile development, and a full API reference.
+- account profile data
+- saved jobs and recruiter feedback
+- applications and inbox messages
+- onboarding progress and CV insights
+- uploaded CV files to the `smart-job-cvs` storage bucket
+
+If the Supabase keys are missing or the backend is unavailable, SmartJob falls back to the local Hive database so the app still works offline.

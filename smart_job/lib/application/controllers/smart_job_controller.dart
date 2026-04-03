@@ -78,6 +78,12 @@ class SmartJobController extends Notifier<SmartJobState> {
   @override
   SmartJobState build() {
     final repository = ref.read(smartJobRepositoryProvider);
+    final sessionEmail = repository.currentSessionEmail();
+    if (sessionEmail != null) {
+      return _buildStateForAccount(
+        repository.loadOrCreateAccount(email: sessionEmail),
+      );
+    }
     return _buildStateForAccount(repository.initialAccount());
   }
 
@@ -291,6 +297,7 @@ class SmartJobController extends Notifier<SmartJobState> {
     required String fileName,
     required List<String> targetRoles,
     required List<String> preferredLocations,
+    String remoteStoragePath = '',
   }) {
     _updateProfile(
       (profile) => profile.copyWith(
@@ -302,13 +309,21 @@ class SmartJobController extends Notifier<SmartJobState> {
         ),
         cvInsight: profile.cvInsight.copyWith(
           fileName: fileName,
-          parsedSummary:
-              '$fileName is now connected to your SmartJob account. Review the suggestions below and keep refining your strongest sections.',
-          highlightedStrengths: const [
-            'Real CV upload connected',
-            'Strong role alignment detected',
-            'Ready for AI scoring and export',
-          ],
+          remoteStoragePath: remoteStoragePath,
+          parsedSummary: remoteStoragePath.isNotEmpty
+              ? '$fileName is uploaded to your SmartJob cloud storage and connected to this account.'
+              : '$fileName is now connected to your SmartJob account. Review the suggestions below and keep refining your strongest sections.',
+          highlightedStrengths: remoteStoragePath.isNotEmpty
+              ? const [
+                  'Real CV upload connected',
+                  'Cloud backup enabled',
+                  'Ready for AI scoring and export',
+                ]
+              : const [
+                  'Real CV upload connected',
+                  'Strong role alignment detected',
+                  'Ready for AI scoring and export',
+                ],
           missingKeywords: const [
             'State management',
             'Product metrics',
@@ -316,7 +331,8 @@ class SmartJobController extends Notifier<SmartJobState> {
           ],
         ),
       ),
-      autosaveLabel: 'CV uploaded just now',
+      autosaveLabel:
+          remoteStoragePath.isNotEmpty ? 'CV uploaded and synced just now' : 'CV uploaded just now',
     );
   }
 
@@ -383,6 +399,7 @@ class SmartJobController extends Notifier<SmartJobState> {
     required String phoneNumber,
     required String location,
     required String headline,
+    String? tagline,
   }) {
     _updateProfile(
       (profile) => profile.copyWith(
@@ -390,6 +407,7 @@ class SmartJobController extends Notifier<SmartJobState> {
         phoneNumber: phoneNumber,
         location: location,
         headline: headline,
+        tagline: tagline ?? profile.tagline,
         photoLabel: _initialsFromName(fullName),
       ),
     );
@@ -401,33 +419,130 @@ class SmartJobController extends Notifier<SmartJobState> {
     required String email,
     required String phoneNumber,
     required String location,
+    String? tagline,
+    String? linkedInUrl,
+    String? portfolioUrl,
+    String? websiteUrl,
   }) {
+    final normalizedEmail = email.trim().toLowerCase();
     _updateProfile(
       (profile) => profile.copyWith(
         fullName: fullName,
         headline: headline,
-        email: email,
+        email: normalizedEmail,
         phoneNumber: phoneNumber,
         location: location,
+        tagline: tagline ?? profile.tagline,
+        linkedInUrl: linkedInUrl ?? profile.linkedInUrl,
+        portfolioUrl: portfolioUrl ?? profile.portfolioUrl,
+        websiteUrl: websiteUrl ?? profile.websiteUrl,
+        links: _composeProfileLinks(
+          linkedInUrl: linkedInUrl ?? profile.linkedInUrl,
+          portfolioUrl: portfolioUrl ?? profile.portfolioUrl,
+          websiteUrl: websiteUrl ?? profile.websiteUrl,
+          existingLinks: profile.links,
+        ),
         photoLabel: _initialsFromName(fullName),
-        smartInboxAlias: '${email.split('@').first}@inbox.smartjob.app',
+        smartInboxAlias: '${normalizedEmail.split('@').first}@inbox.smartjob.app',
       ),
       autosaveLabel: 'Personal details autosaved',
+    );
+  }
+
+  void updateProfileWorkspace({
+    required String fullName,
+    required String headline,
+    required String tagline,
+    required String email,
+    required String phoneNumber,
+    required String location,
+    required String linkedInUrl,
+    required String portfolioUrl,
+    required String websiteUrl,
+  }) {
+    updateProfileIdentity(
+      fullName: fullName,
+      headline: headline,
+      email: email,
+      phoneNumber: phoneNumber,
+      location: location,
+      tagline: tagline,
+      linkedInUrl: linkedInUrl,
+      portfolioUrl: portfolioUrl,
+      websiteUrl: websiteUrl,
+    );
+  }
+
+  void updatePublicProfileVisibility(bool enabled) {
+    _updateProfile(
+      (profile) => profile.copyWith(publicProfileEnabled: enabled),
+      autosaveLabel: 'Public profile preferences updated',
+    );
+  }
+
+  void updateHideContactInfo(bool enabled) {
+    _updateProfile(
+      (profile) => profile.copyWith(hideContactInfo: enabled),
+      autosaveLabel: 'Contact visibility updated',
     );
   }
 
   void updateJobPreferences({
     required List<String> targetRoles,
     required String salaryRange,
+    List<JobType>? preferredJobTypes,
+    List<WorkMode>? preferredWorkModes,
+    List<String>? preferredLocations,
+    int? salaryExpectation,
+    bool? hasWorkAuthorization,
+    bool? openToRelocation,
+    bool? wantsNotifications,
+    AlertFrequency? emailFrequency,
+    bool? pushNotificationsEnabled,
+    bool? emailNotificationsEnabled,
   }) {
     _updateProfile(
       (profile) => profile.copyWith(
         jobPreferences: profile.jobPreferences.copyWith(
           targetRoles: targetRoles,
           salaryRange: salaryRange,
+          preferredJobTypes: preferredJobTypes ?? profile.jobPreferences.preferredJobTypes,
+          preferredWorkModes: preferredWorkModes ?? profile.jobPreferences.preferredWorkModes,
+          preferredLocations: preferredLocations ?? profile.jobPreferences.preferredLocations,
+          salaryExpectation: salaryExpectation ?? profile.jobPreferences.salaryExpectation,
+          hasWorkAuthorization:
+              hasWorkAuthorization ?? profile.jobPreferences.hasWorkAuthorization,
+          openToRelocation:
+              openToRelocation ?? profile.jobPreferences.openToRelocation,
+          wantsNotifications:
+              wantsNotifications ?? profile.jobPreferences.wantsNotifications,
+          emailFrequency: emailFrequency ?? profile.jobPreferences.emailFrequency,
+          pushNotificationsEnabled: pushNotificationsEnabled ??
+              profile.jobPreferences.pushNotificationsEnabled,
+          emailNotificationsEnabled: emailNotificationsEnabled ??
+              profile.jobPreferences.emailNotificationsEnabled,
         ),
       ),
       autosaveLabel: 'Job preferences updated',
+    );
+  }
+
+  void updateCvStudioCustomization({
+    String? templateName,
+    String? accentColorHex,
+    String? fontFamily,
+    List<String>? sectionOrder,
+  }) {
+    _updateProfile(
+      (profile) => profile.copyWith(
+        cvInsight: profile.cvInsight.copyWith(
+          selectedTemplate: templateName ?? profile.cvInsight.selectedTemplate,
+          accentColorHex: accentColorHex ?? profile.cvInsight.accentColorHex,
+          fontFamily: fontFamily ?? profile.cvInsight.fontFamily,
+          sectionOrder: sectionOrder ?? profile.cvInsight.sectionOrder,
+        ),
+      ),
+      autosaveLabel: 'CV customization autosaved',
     );
   }
 
@@ -600,7 +715,7 @@ class SmartJobController extends Notifier<SmartJobState> {
       'Skills': profile.skills.isNotEmpty,
       'Certifications': profile.certifications.isNotEmpty,
       'Languages': profile.languages.isNotEmpty,
-      'Links': profile.links.isNotEmpty,
+      'Links': _profileLinks(profile).isNotEmpty,
       'Awards': profile.awards.isNotEmpty,
       'Volunteer work': profile.volunteerWork.isNotEmpty,
     };
@@ -615,7 +730,7 @@ class SmartJobController extends Notifier<SmartJobState> {
             (completedCount * 4) +
             (math.min(profile.skills.length, 8) * 3) +
             (profile.projects.isNotEmpty ? 5 : 0) +
-            (profile.links.isNotEmpty ? 4 : 0))
+            (_profileLinks(profile).isNotEmpty ? 4 : 0))
         .clamp(32, 98);
 
     final keywordMatchScore = (40 +
@@ -636,7 +751,7 @@ class SmartJobController extends Notifier<SmartJobState> {
         'Add one experience entry with action verbs, tools used, and measurable outcomes.',
       if (profile.projects.isEmpty)
         'Show one project that proves how you ship, test, or design real work.',
-      if (profile.links.isEmpty)
+      if (_profileLinks(profile).isEmpty)
         'Add LinkedIn, GitHub, or portfolio links so recruiters can validate your work fast.',
       if (profile.awards.isEmpty)
         'Awards and achievements help students show proof when experience is still growing.',
@@ -653,7 +768,9 @@ class SmartJobController extends Notifier<SmartJobState> {
     final highlightedStrengths = _highlightedStrengths(profile);
 
     final summary = profile.hasUploadedCv
-        ? 'Your uploaded CV is connected to SmartJob. Keep refining sections below to improve ATS readability and recruiter confidence.'
+        ? profile.cvInsight.remoteStoragePath.isNotEmpty
+            ? 'Your uploaded CV is backed up to SmartJob cloud storage and synced across supported devices. Keep refining sections below to improve ATS readability and recruiter confidence.'
+            : 'Your uploaded CV is connected to SmartJob. Keep refining sections below to improve ATS readability and recruiter confidence.'
         : profile.hasCvDraft
             ? 'Your SmartJob builder is turning profile sections into a polished CV draft. Complete the missing areas to reach a recruiter-ready score.'
             : 'Start with skills, projects, and one experience entry to turn this draft into a stronger one-page CV.';
@@ -674,6 +791,7 @@ class SmartJobController extends Notifier<SmartJobState> {
         missingKeywords: missingKeywords,
         highlightedStrengths: highlightedStrengths,
         parsedSummary: summary,
+        lastEditedAtIso: DateTime.now().toUtc().toIso8601String(),
       ),
     );
   }
@@ -689,7 +807,7 @@ class SmartJobController extends Notifier<SmartJobState> {
     final strengths = <String>[
       ...profile.skills.take(2),
       if (profile.projects.isNotEmpty) 'Project-backed profile',
-      if (profile.links.isNotEmpty) 'Portfolio visibility',
+      if (_profileLinks(profile).isNotEmpty) 'Portfolio visibility',
       if (profile.certifications.isNotEmpty) 'Verified learning signals',
       if (profile.volunteerWork.isNotEmpty) 'Community impact',
     ];
@@ -705,6 +823,37 @@ class SmartJobController extends Notifier<SmartJobState> {
     return strengths.take(3).toList();
   }
 
+  List<String> _profileLinks(UserProfile profile) {
+    return _composeProfileLinks(
+      linkedInUrl: profile.linkedInUrl,
+      portfolioUrl: profile.portfolioUrl,
+      websiteUrl: profile.websiteUrl,
+      existingLinks: profile.links,
+    );
+  }
+
+  List<String> _composeProfileLinks({
+    required String linkedInUrl,
+    required String portfolioUrl,
+    required String websiteUrl,
+    required List<String> existingLinks,
+  }) {
+    final prioritizedLinks = [
+      linkedInUrl.trim(),
+      portfolioUrl.trim(),
+      websiteUrl.trim(),
+      ...existingLinks.map((link) => link.trim()),
+    ];
+
+    final uniqueLinks = <String>[];
+    for (final link in prioritizedLinks) {
+      if (link.isEmpty || uniqueLinks.contains(link)) {
+        continue;
+      }
+      uniqueLinks.add(link);
+    }
+    return uniqueLinks;
+  }
   List<String> _suggestedKeywords(UserProfile profile) {
     final desiredRoles = profile.jobPreferences.targetRoles.join(' ').toLowerCase();
     final suggestions = <String>{
@@ -865,6 +1014,12 @@ final applicationStatsProvider = Provider<Map<ApplicationStatus, int>>((ref) {
       status: applications.where((app) => app.status == status).length,
   };
 });
+
+
+
+
+
+
 
 
 

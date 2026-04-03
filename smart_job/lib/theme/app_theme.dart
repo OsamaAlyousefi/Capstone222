@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import 'app_colors.dart';
 import 'app_text_styles.dart';
+import 'smart_job_studio_theme.dart';
 
 class AppTheme {
   static ThemeData get lightTheme => _buildTheme(Brightness.light);
@@ -29,6 +30,30 @@ class AppTheme {
       AppColors.subtext(brightness),
     );
 
+    final studioTheme = isDark
+        ? const SmartJobStudioTheme(
+            glassPanel: Color(0xCC162535),
+            glassStrong: Color(0xF0192B3E),
+            glassBorder: Color(0x66395573),
+            sidebarGradientTop: Color(0xFF19324A),
+            sidebarGradientBottom: Color(0xFF102131),
+            highlight: Color(0xFF5D8CC3),
+            mutedHighlight: Color(0x3321A4F3),
+            previewPaper: Color(0xFFF5F2EC),
+            exportBar: Color(0xE0142232),
+          )
+        : const SmartJobStudioTheme(
+            glassPanel: Color(0xEAFDFBF7),
+            glassStrong: Color(0xFFF8F2EA),
+            glassBorder: Color(0x66C9B9A5),
+            sidebarGradientTop: Color(0xFFFFFFFF),
+            sidebarGradientBottom: Color(0xFFF1E6D9),
+            highlight: Color(0xFF3B5C7A),
+            mutedHighlight: Color(0x1F3B5C7A),
+            previewPaper: Color(0xFFFEFCFA),
+            exportBar: Color(0xF6FFF8F2),
+          );
+
     return ThemeData(
       useMaterial3: true,
       brightness: brightness,
@@ -37,6 +62,7 @@ class AppTheme {
       textTheme: textTheme,
       dividerColor: AppColors.stroke(brightness),
       splashFactory: InkSparkle.splashFactory,
+      extensions: [studioTheme],
       appBarTheme: AppBarTheme(
         centerTitle: false,
         backgroundColor: Colors.transparent,
