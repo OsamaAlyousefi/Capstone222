@@ -145,6 +145,29 @@ class SmartJobController extends Notifier<SmartJobState> {
     state = state.copyWith(selectedSalaryRange: value);
   }
 
+  void resetJobFilters() {
+    state = state.copyWith(
+      searchQuery: '',
+      selectedLocation: 'All locations',
+      clearSelectedJobType: true,
+      clearSelectedWorkMode: true,
+      clearSelectedExperienceLevel: true,
+      selectedSalaryRange: 'Any salary',
+    );
+  }
+
+  void setJobSaved(String jobId, bool isSaved) {
+    _persistAccount(
+      jobs: [
+        for (final job in state.jobs)
+          if (job.id == jobId)
+            job.copyWith(isSaved: isSaved)
+          else
+            job,
+      ],
+    );
+  }
+
   void toggleSaveJob(String jobId) {
     _persistAccount(
       jobs: [
@@ -1014,6 +1037,7 @@ final applicationStatsProvider = Provider<Map<ApplicationStatus, int>>((ref) {
       status: applications.where((app) => app.status == status).length,
   };
 });
+
 
 
 

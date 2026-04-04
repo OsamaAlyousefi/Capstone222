@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+﻿import 'package:flutter/material.dart';
 import 'package:flutter_animate/flutter_animate.dart';
 import 'package:lucide_icons/lucide_icons.dart';
 
@@ -82,11 +82,13 @@ class SmartJobScrollPage extends StatelessWidget {
     required this.child,
     this.maxWidth = 1160,
     this.padding,
+    this.scrollViewKey,
   });
 
   final Widget child;
   final double maxWidth;
   final EdgeInsetsGeometry? padding;
+  final Key? scrollViewKey;
 
   @override
   Widget build(BuildContext context) {
@@ -100,6 +102,7 @@ class SmartJobScrollPage extends StatelessWidget {
                   : 16.0;
 
           return SingleChildScrollView(
+            key: scrollViewKey,
             padding: EdgeInsets.zero,
             child: Align(
               alignment: Alignment.topCenter,
@@ -745,3 +748,5 @@ class _Orb extends StatelessWidget {
     );
   }
 }
+
+

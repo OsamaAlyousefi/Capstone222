@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+﻿import 'package:flutter/material.dart';
 import 'package:lucide_icons/lucide_icons.dart';
 
 import '../../../domain/models/job.dart';
@@ -9,54 +9,48 @@ class JobCard extends StatelessWidget {
   const JobCard({
     super.key,
     required this.job,
-    required this.onReadMore,
+    required this.onOpenDetails,
     required this.onApply,
     required this.onSaveToggle,
-    required this.onFeedback,
-    this.featured = false,
+    required this.onSwipeSave,
+    required this.onSwipeDismiss,
   });
 
   final Job job;
-  final VoidCallback onReadMore;
+  final VoidCallback onOpenDetails;
   final VoidCallback onApply;
   final VoidCallback onSaveToggle;
-  final ValueChanged<JobFeedback> onFeedback;
-  final bool featured;
+  final VoidCallback onSwipeSave;
+  final VoidCallback onSwipeDismiss;
 
   @override
   Widget build(BuildContext context) {
-    final brightness = Theme.of(context).brightness;
-    final textTheme = Theme.of(context).textTheme;
-
-    return SmartJobPanel(
-      margin: EdgeInsets.only(right: featured ? 14 : 0),
-      padding: const EdgeInsets.all(20),
-      child: SizedBox(
-        width: featured ? 320 : null,
-        child: featured
-            ? SingleChildScrollView(
-                padding: EdgeInsets.zero,
-                child: _JobCardContent(
-                  job: job,
-                  featured: featured,
-                  brightness: brightness,
-                  textTheme: textTheme,
-                  onReadMore: onReadMore,
-                  onApply: onApply,
-                  onSaveToggle: onSaveToggle,
-                  onFeedback: onFeedback,
-                ),
-              )
-            : _JobCardContent(
-                job: job,
-                featured: featured,
-                brightness: brightness,
-                textTheme: textTheme,
-                onReadMore: onReadMore,
-                onApply: onApply,
-                onSaveToggle: onSaveToggle,
-                onFeedback: onFeedback,
-              ),
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onHorizontalDragEnd: (details) {
+        final velocity = details.primaryVelocity ?? 0;
+        if (velocity > 320) {
+          onSwipeSave();
+        } else if (velocity < -320) {
+          onSwipeDismiss();
+        }
+      },
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          onTap: onOpenDetails,
+          borderRadius: BorderRadius.circular(26),
+          child: SmartJobPanel(
+            padding: const EdgeInsets.all(16),
+            radius: 26,
+            child: _JobCardContent(
+              job: job,
+              onOpenDetails: onOpenDetails,
+              onApply: onApply,
+              onSaveToggle: onSaveToggle,
+            ),
+          ),
+        ),
       ),
     );
   }
@@ -65,38 +59,39 @@ class JobCard extends StatelessWidget {
 class _JobCardContent extends StatelessWidget {
   const _JobCardContent({
     required this.job,
-    required this.featured,
-    required this.brightness,
-    required this.textTheme,
-    required this.onReadMore,
+    required this.onOpenDetails,
     required this.onApply,
     required this.onSaveToggle,
-    required this.onFeedback,
   });
 
   final Job job;
-  final bool featured;
-  final Brightness brightness;
-  final TextTheme textTheme;
-  final VoidCallback onReadMore;
+  final VoidCallback onOpenDetails;
   final VoidCallback onApply;
   final VoidCallback onSaveToggle;
-  final ValueChanged<JobFeedback> onFeedback;
 
   @override
   Widget build(BuildContext context) {
+    final brightness = Theme.of(context).brightness;
+    final textTheme = Theme.of(context).textTheme;
     final matchColor = jobMatchColor(job.matchScore);
     final matchPercentage = (job.matchScore * 100).round();
-    final matchLabel = jobMatchLabel(job.matchScore);
 
     return Column(
-      mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
+        _CompactMatchStrip(
+          matchPercentage: matchPercentage,
+          matchLabel: jobMatchLabel(job.matchScore),
+          color: matchColor,
+        ),
+        const SizedBox(height: 14),
         Row(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            SmartJobAvatar(label: job.logoLabel, size: 50),
+            Hero(
+              tag: 'job-logo-${job.id}',
+              child: SmartJobAvatar(label: job.logoLabel, size: 52),
+            ),
             const SizedBox(width: 14),
             Expanded(
               child: Column(
@@ -104,15 +99,22 @@ class _JobCardContent extends StatelessWidget {
                 children: [
                   Text(
                     job.title,
-                    maxLines: featured ? 2 : 1,
+                    maxLines: 2,
                     overflow: TextOverflow.ellipsis,
-                    style: textTheme.headlineMedium,
+                    style: textTheme.headlineMedium?.copyWith(height: 1.15),
                   ),
-                  const SizedBox(height: 4),
+                  const SizedBox(height: 6),
                   Text(
                     '${job.companyName} / ${job.source}',
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
+                    style: textTheme.bodyMedium?.copyWith(
+                      color: AppColors.subtext(brightness),
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    job.postedLabel,
                     style: textTheme.bodySmall?.copyWith(
                       color: AppColors.subtext(brightness),
                     ),
@@ -120,59 +122,31 @@ class _JobCardContent extends StatelessWidget {
                 ],
               ),
             ),
-            IconButton(
-              onPressed: onSaveToggle,
-              constraints: const BoxConstraints.tightFor(width: 36, height: 36),
-              padding: EdgeInsets.zero,
-              visualDensity: VisualDensity.compact,
-              icon: Icon(
-                LucideIcons.bookmark,
-                size: 20,
-                color: job.isSaved
-                    ? AppColors.midnight
-                    : AppColors.subtext(brightness),
-              ),
+            const SizedBox(width: 12),
+            _AnimatedSaveButton(
+              isSaved: job.isSaved,
+              onTap: onSaveToggle,
             ),
           ],
         ),
         const SizedBox(height: 14),
-        _MatchBanner(
-          matchPercentage: matchPercentage,
-          matchLabel: matchLabel,
-          color: matchColor,
-          brightness: brightness,
-        ),
-        const SizedBox(height: 14),
         Wrap(
           spacing: 8,
           runSpacing: 8,
           children: [
-            _MiniTag(icon: LucideIcons.mapPin, label: job.location),
-            _MiniTag(icon: LucideIcons.banknote, label: job.salary),
-            _MiniTag(icon: LucideIcons.briefcase, label: jobTypeLabel(job.jobType)),
+            _InfoChip(icon: LucideIcons.mapPin, label: job.location),
+            _InfoChip(icon: LucideIcons.banknote, label: job.salary),
+            _InfoChip(icon: LucideIcons.briefcase, label: jobTypeLabel(job.jobType)),
+            _InfoChip(icon: LucideIcons.wifi, label: workModeLabel(job.workMode)),
           ],
         ),
-        const SizedBox(height: 16),
-        Container(
-          padding: const EdgeInsets.all(14),
-          decoration: BoxDecoration(
-            color: AppColors.surfaceMuted(brightness),
-            borderRadius: BorderRadius.circular(20),
-          ),
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const Icon(LucideIcons.sparkles, size: 16, color: AppColors.sand),
-              const SizedBox(width: 8),
-              Expanded(
-                child: Text(
-                  job.aiSummary,
-                  maxLines: featured ? 4 : 3,
-                  overflow: TextOverflow.ellipsis,
-                  style: textTheme.bodyMedium,
-                ),
-              ),
-            ],
+        const SizedBox(height: 14),
+        Text(
+          job.description,
+          maxLines: 2,
+          overflow: TextOverflow.ellipsis,
+          style: textTheme.bodyMedium?.copyWith(
+            color: AppColors.text(brightness).withValues(alpha: 0.88),
           ),
         ),
         const SizedBox(height: 14),
@@ -180,15 +154,22 @@ class _JobCardContent extends StatelessWidget {
           spacing: 8,
           runSpacing: 8,
           children: [
-            for (final tag in job.tags.take(2)) _MiniTag(icon: LucideIcons.tag, label: tag),
+            for (final skill in job.skills.take(4)) _SkillTag(label: skill),
           ],
+        ),
+        const SizedBox(height: 12),
+        Text(
+          'Swipe right to save or left for not interested',
+          style: textTheme.bodySmall?.copyWith(
+            color: AppColors.subtext(brightness),
+          ),
         ),
         const SizedBox(height: 16),
         Row(
           children: [
             Expanded(
               child: OutlinedButton(
-                onPressed: onReadMore,
+                onPressed: onOpenDetails,
                 child: const Text('Read more'),
               ),
             ),
@@ -201,103 +182,80 @@ class _JobCardContent extends StatelessWidget {
             ),
           ],
         ),
-        const SizedBox(height: 10),
-        Row(
-          children: [
-            Expanded(
-              child: _FeedbackButton(
-                icon: LucideIcons.badgeCheck,
-                label: 'Interested',
-                selected: job.feedback == JobFeedback.interested,
-                onTap: () => onFeedback(JobFeedback.interested),
-              ),
-            ),
-            const SizedBox(width: 10),
-            Expanded(
-              child: _FeedbackButton(
-                icon: LucideIcons.circleOff,
-                label: 'Not for me',
-                selected: job.feedback == JobFeedback.notInterested,
-                onTap: () => onFeedback(JobFeedback.notInterested),
-              ),
-            ),
-          ],
-        ),
       ],
     );
   }
 }
 
-class _MatchBanner extends StatelessWidget {
-  const _MatchBanner({
+class _CompactMatchStrip extends StatelessWidget {
+  const _CompactMatchStrip({
     required this.matchPercentage,
     required this.matchLabel,
     required this.color,
-    required this.brightness,
   });
 
   final int matchPercentage;
   final String matchLabel;
   final Color color;
-  final Brightness brightness;
 
   @override
   Widget build(BuildContext context) {
+    final brightness = Theme.of(context).brightness;
+
     return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(14),
+      height: 46,
+      padding: const EdgeInsets.symmetric(horizontal: 10),
       decoration: BoxDecoration(
-        color: color.withValues(alpha: brightness == Brightness.dark ? 0.18 : 0.12),
-        borderRadius: BorderRadius.circular(22),
-        border: Border.all(color: color.withValues(alpha: 0.65)),
+        color: AppColors.surfaceMuted(brightness).withValues(alpha: 0.72),
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: AppColors.stroke(brightness)),
       ),
       child: Row(
         children: [
-          Container(
-            width: 54,
-            height: 54,
-            alignment: Alignment.center,
-            decoration: BoxDecoration(
-              color: color,
-              borderRadius: BorderRadius.circular(18),
-            ),
-            child: Text(
-              '$matchPercentage%',
-              style: Theme.of(context).textTheme.labelLarge?.copyWith(
-                    color: Colors.white,
-                    fontSize: 16,
-                  ),
-            ),
-          ),
-          const SizedBox(width: 12),
-          Expanded(
+          SizedBox(
+            width: 44,
             child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisAlignment: MainAxisAlignment.center,
               children: [
-                Text(
-                  'Job match',
-                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                        color: AppColors.subtext(brightness),
-                      ),
+                Container(
+                  width: 28,
+                  height: 28,
+                  alignment: Alignment.center,
+                  decoration: BoxDecoration(
+                    color: color.withValues(alpha: 0.18),
+                    shape: BoxShape.circle,
+                  ),
+                  child: Text(
+                    '$matchPercentage%',
+                    style: Theme.of(context).textTheme.labelMedium?.copyWith(
+                      fontSize: 8.5,
+                      color: color,
+                    ),
+                  ),
                 ),
-                const SizedBox(height: 4),
+                const SizedBox(height: 2),
                 Text(
-                  matchLabel,
-                  style: Theme.of(context).textTheme.headlineMedium?.copyWith(
-                        color: color,
-                      ),
-                ),
-                const SizedBox(height: 8),
-                ClipRRect(
-                  borderRadius: BorderRadius.circular(999),
-                  child: LinearProgressIndicator(
-                    value: matchPercentage / 100,
-                    minHeight: 8,
-                    backgroundColor: AppColors.surfaceMuted(brightness),
-                    valueColor: AlwaysStoppedAnimation<Color>(color),
+                  'Match',
+                  style: Theme.of(context).textTheme.labelMedium?.copyWith(
+                    fontSize: 8.5,
+                    color: AppColors.subtext(brightness),
                   ),
                 ),
               ],
+            ),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: _MatchProgressBar(
+              value: matchPercentage / 100,
+              color: color,
+            ),
+          ),
+          const SizedBox(width: 12),
+          Text(
+            matchLabel,
+            style: Theme.of(context).textTheme.labelLarge?.copyWith(
+              color: color,
             ),
           ),
         ],
@@ -306,92 +264,160 @@ class _MatchBanner extends StatelessWidget {
   }
 }
 
-class _MiniTag extends StatelessWidget {
-  const _MiniTag({required this.icon, required this.label});
+class _MatchProgressBar extends StatelessWidget {
+  const _MatchProgressBar({
+    required this.value,
+    required this.color,
+  });
+
+  final double value;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) {
+    final brightness = Theme.of(context).brightness;
+
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final trackWidth = constraints.maxWidth;
+        final fillWidth = (trackWidth * value.clamp(0.0, 1.0)).toDouble();
+
+        return Stack(
+          children: [
+            Container(
+              height: 6,
+              decoration: BoxDecoration(
+                color: AppColors.surface(brightness),
+                borderRadius: BorderRadius.circular(999),
+              ),
+            ),
+            AnimatedContainer(
+              duration: const Duration(milliseconds: 260),
+              curve: Curves.easeOutCubic,
+              width: fillWidth,
+              height: 6,
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(999),
+                gradient: LinearGradient(
+                  colors: [
+                    AppColors.midnight.withValues(alpha: 0.68),
+                    color,
+                  ],
+                ),
+              ),
+            ),
+          ],
+        );
+      },
+    );
+  }
+}
+
+class _AnimatedSaveButton extends StatelessWidget {
+  const _AnimatedSaveButton({
+    required this.isSaved,
+    required this.onTap,
+  });
+
+  final bool isSaved;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final brightness = Theme.of(context).brightness;
+
+    return AnimatedScale(
+      scale: isSaved ? 1.06 : 1,
+      duration: const Duration(milliseconds: 180),
+      curve: Curves.easeOutBack,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(16),
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 180),
+          width: 40,
+          height: 40,
+          decoration: BoxDecoration(
+            color: isSaved
+                ? AppColors.midnight
+                : AppColors.surfaceMuted(brightness),
+            borderRadius: BorderRadius.circular(16),
+          ),
+          child: AnimatedSwitcher(
+            duration: const Duration(milliseconds: 180),
+            transitionBuilder: (child, animation) => ScaleTransition(
+              scale: animation,
+              child: FadeTransition(opacity: animation, child: child),
+            ),
+            child: Icon(
+              isSaved ? Icons.bookmark_rounded : Icons.bookmark_outline_rounded,
+              key: ValueKey(isSaved),
+              size: 20,
+              color: isSaved ? Colors.white : AppColors.subtext(brightness),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _InfoChip extends StatelessWidget {
+  const _InfoChip({
+    required this.icon,
+    required this.label,
+  });
 
   final IconData icon;
   final String label;
 
   @override
   Widget build(BuildContext context) {
+    final brightness = Theme.of(context).brightness;
+
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
       decoration: BoxDecoration(
-        color: AppColors.surfaceMuted(Theme.of(context).brightness),
-        borderRadius: BorderRadius.circular(16),
+        color: AppColors.surfaceMuted(brightness).withValues(alpha: 0.78),
+        borderRadius: BorderRadius.circular(14),
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
           Icon(icon, size: 14, color: AppColors.teal),
           const SizedBox(width: 6),
-          Text(label, style: Theme.of(context).textTheme.bodySmall),
+          Text(
+            label,
+            style: Theme.of(context).textTheme.bodySmall?.copyWith(
+              color: AppColors.text(brightness),
+            ),
+          ),
         ],
       ),
     );
   }
 }
 
-class _FeedbackButton extends StatefulWidget {
-  const _FeedbackButton({
-    required this.icon,
-    required this.label,
-    required this.selected,
-    required this.onTap,
-  });
+class _SkillTag extends StatelessWidget {
+  const _SkillTag({required this.label});
 
-  final IconData icon;
   final String label;
-  final bool selected;
-  final VoidCallback onTap;
-
-  @override
-  State<_FeedbackButton> createState() => _FeedbackButtonState();
-}
-
-class _FeedbackButtonState extends State<_FeedbackButton> {
-  bool _hovered = false;
 
   @override
   Widget build(BuildContext context) {
     final brightness = Theme.of(context).brightness;
-    return MouseRegion(
-      onEnter: (_) => setState(() => _hovered = true),
-      onExit: (_) => setState(() => _hovered = false),
-      child: Material(
-        color: Colors.transparent,
-        child: InkWell(
-          onTap: widget.onTap,
-          borderRadius: BorderRadius.circular(18),
-          child: AnimatedContainer(
-            duration: const Duration(milliseconds: 180),
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
-            decoration: BoxDecoration(
-              color: widget.selected
-                  ? AppColors.midnight
-                  : _hovered
-                      ? AppColors.surface(brightness)
-                      : AppColors.surfaceMuted(brightness),
-              borderRadius: BorderRadius.circular(18),
-            ),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Icon(
-                  widget.icon,
-                  size: 16,
-                  color: widget.selected ? Colors.white : AppColors.subtext(brightness),
-                ),
-                const SizedBox(width: 8),
-                Text(
-                  widget.label,
-                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                        color: widget.selected ? Colors.white : AppColors.text(brightness),
-                      ),
-                ),
-              ],
-            ),
-          ),
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(color: AppColors.stroke(brightness)),
+        color: AppColors.surface(brightness).withValues(alpha: 0.82),
+      ),
+      child: Text(
+        label,
+        style: Theme.of(context).textTheme.bodySmall?.copyWith(
+          color: AppColors.text(brightness),
         ),
       ),
     );
