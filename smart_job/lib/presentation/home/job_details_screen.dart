@@ -677,7 +677,7 @@ class _SimilarJobCard extends StatelessWidget {
                 ),
                 const SizedBox(height: 10),
                 Text(
-                  '${job.location} â€¢ ${workModeLabel(job.workMode)}',
+                  '${job.location} / ${workModeLabel(job.workMode)}',
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: Theme.of(context).textTheme.bodySmall?.copyWith(

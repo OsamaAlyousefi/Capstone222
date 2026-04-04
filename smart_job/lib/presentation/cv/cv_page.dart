@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+﻿import 'package:flutter/material.dart';
 import 'package:flutter_animate/flutter_animate.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -295,8 +295,8 @@ class _HeroCard extends StatelessWidget {
             spacing: 10,
             runSpacing: 10,
             children: [
-              const _StatusPill(label: 'Uploaded âœ“'),
-              const _StatusPill(label: 'Autosaved âœ“'),
+              const _StatusPill(label: 'Uploaded'),
+              const _StatusPill(label: 'Autosaved'),
               _StatusPill(label: 'Sections parsed $parsedCompletion%'),
               _StatusPill(label: lastEditedLabel, highlighted: true),
             ],
@@ -775,7 +775,7 @@ class _ResumeDocument extends StatelessWidget {
                 Text('SKILLS', style: sectionTitleStyle),
                 const SizedBox(height: 12),
                 for (final item in (data['skills'] as List<dynamic>).take(6)) ...[
-                  Text('â€¢ ${item.toString()}', style: bodyStyle.copyWith(fontSize: 10.4)),
+                  Text('- ${item.toString()}', style: bodyStyle.copyWith(fontSize: 10.4)),
                   const SizedBox(height: 6),
                 ],
               ],
