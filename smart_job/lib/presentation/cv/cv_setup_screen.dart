@@ -23,6 +23,15 @@ class _CvSetupScreenState extends ConsumerState<CvSetupScreen> {
   late final TextEditingController _experienceController;
   late final TextEditingController _educationController;
   late final TextEditingController _projectsController;
+  final ScrollController _scrollController = ScrollController();
+  final Map<String, GlobalKey> _sectionKeys = {
+    'identity': GlobalKey(),
+    'skills': GlobalKey(),
+    'experience': GlobalKey(),
+    'education': GlobalKey(),
+    'projects': GlobalKey(),
+  };
+  String? _lastJumpedSection;
 
   @override
   void initState() {
@@ -39,6 +48,7 @@ class _CvSetupScreenState extends ConsumerState<CvSetupScreen> {
 
   @override
   void dispose() {
+    _scrollController.dispose();
     _nameController.dispose();
     _headlineController.dispose();
     _taglineController.dispose();
@@ -52,10 +62,27 @@ class _CvSetupScreenState extends ConsumerState<CvSetupScreen> {
   @override
   Widget build(BuildContext context) {
     final profile = ref.watch(smartJobControllerProvider.select((state) => state.profile));
+    final requestedSection = GoRouterState.of(context).uri.queryParameters['section'];
+
+    if (requestedSection != null && requestedSection != _lastJumpedSection) {
+      _lastJumpedSection = requestedSection;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        final targetContext = _sectionKeys[requestedSection]?.currentContext;
+        if (targetContext != null) {
+          Scrollable.ensureVisible(
+            targetContext,
+            duration: const Duration(milliseconds: 350),
+            curve: Curves.easeOutCubic,
+            alignment: 0.08,
+          );
+        }
+      });
+    }
 
     return Scaffold(
       body: SmartJobBackground(
         child: SmartJobScrollPage(
+          controller: _scrollController,
           maxWidth: 980,
           padding: const EdgeInsets.fromLTRB(24, 24, 24, 140),
           child: Column(
@@ -82,6 +109,11 @@ class _CvSetupScreenState extends ConsumerState<CvSetupScreen> {
                         SmartJobMetricPill(label: 'experience', value: '${profile.experience.length}'),
                         SmartJobMetricPill(label: 'education', value: '${profile.education.length}'),
                         SmartJobMetricPill(label: 'projects', value: '${profile.projects.length}'),
+                        if (requestedSection != null)
+                          SmartJobMetricPill(
+                            label: 'jumped to',
+                            value: _sectionLabel(requestedSection),
+                          ),
                       ],
                     ),
                   ],
@@ -92,19 +124,34 @@ class _CvSetupScreenState extends ConsumerState<CvSetupScreen> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    TextField(controller: _nameController, decoration: const InputDecoration(labelText: 'Full name')),
+                    Container(
+                      key: _sectionKeys['identity'],
+                      child: TextField(controller: _nameController, decoration: const InputDecoration(labelText: 'Full name')),
+                    ),
                     const SizedBox(height: 14),
                     TextField(controller: _headlineController, decoration: const InputDecoration(labelText: 'Headline')),
                     const SizedBox(height: 14),
                     TextField(controller: _taglineController, decoration: const InputDecoration(labelText: 'Tagline')),
                     const SizedBox(height: 14),
-                    TextField(controller: _skillsController, minLines: 2, maxLines: 3, decoration: const InputDecoration(labelText: 'Skills', helperText: 'Separate skills with commas.')),
+                    Container(
+                      key: _sectionKeys['skills'],
+                      child: TextField(controller: _skillsController, minLines: 2, maxLines: 3, decoration: const InputDecoration(labelText: 'Skills', helperText: 'Separate skills with commas.')),
+                    ),
                     const SizedBox(height: 14),
-                    TextField(controller: _experienceController, minLines: 4, maxLines: 7, decoration: const InputDecoration(labelText: 'Experience', helperText: 'Use blank lines to separate entries.')),
+                    Container(
+                      key: _sectionKeys['experience'],
+                      child: TextField(controller: _experienceController, minLines: 4, maxLines: 7, decoration: const InputDecoration(labelText: 'Experience', helperText: 'Use blank lines to separate entries.')),
+                    ),
                     const SizedBox(height: 14),
-                    TextField(controller: _educationController, minLines: 3, maxLines: 5, decoration: const InputDecoration(labelText: 'Education', helperText: 'Use blank lines to separate entries.')),
+                    Container(
+                      key: _sectionKeys['education'],
+                      child: TextField(controller: _educationController, minLines: 3, maxLines: 5, decoration: const InputDecoration(labelText: 'Education', helperText: 'Use blank lines to separate entries.')),
+                    ),
                     const SizedBox(height: 14),
-                    TextField(controller: _projectsController, minLines: 3, maxLines: 6, decoration: const InputDecoration(labelText: 'Projects', helperText: 'Use blank lines to separate entries.')),
+                    Container(
+                      key: _sectionKeys['projects'],
+                      child: TextField(controller: _projectsController, minLines: 3, maxLines: 6, decoration: const InputDecoration(labelText: 'Projects', helperText: 'Use blank lines to separate entries.')),
+                    ),
                     const SizedBox(height: 20),
                     Wrap(
                       spacing: 12,
@@ -176,5 +223,20 @@ class _CvSetupScreenState extends ConsumerState<CvSetupScreen> {
 
   List<String> _multiParagraph(String value) {
     return value.split(RegExp(r'\n\s*\n')).map((item) => item.trim()).where((item) => item.isNotEmpty).toList();
+  }
+
+  String _sectionLabel(String section) {
+    switch (section) {
+      case 'skills':
+        return 'Skills';
+      case 'experience':
+        return 'Experience';
+      case 'education':
+        return 'Education';
+      case 'projects':
+        return 'Projects';
+      default:
+        return 'Identity';
+    }
   }
 }

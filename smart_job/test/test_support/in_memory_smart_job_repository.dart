@@ -145,6 +145,8 @@ class InMemorySmartJobRepository implements SmartJobRepository {
             parsedSummary:
                 'Your SmartJob CV draft is ready. Add sections to improve ATS strength and recruiter trust.',
             remoteStoragePath: '',
+            uploadedCvBase64: '',
+            uploadedCvMimeType: '',
             accentColorHex: '#5D8CC3',
             fontFamily: 'Inter',
             sectionOrder: defaultCvSectionOrder,
@@ -160,7 +162,9 @@ class InMemorySmartJobRepository implements SmartJobRepository {
       applications: const [],
       messages: const [],
     );
-  }  String _normalizeEmail(String email) => email.trim().toLowerCase();
+  }
+
+  String _normalizeEmail(String email) => email.trim().toLowerCase();
 
   String _nameFromEmail(String email) {
     final localPart = email.split('@').first.replaceAll(RegExp(r'[._-]+'), ' ');

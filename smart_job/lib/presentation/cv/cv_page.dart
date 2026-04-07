@@ -1,16 +1,21 @@
-﻿import 'package:flutter/material.dart';
-import 'package:flutter_animate/flutter_animate.dart';
+import 'dart:convert';
+import 'dart:math' as math;
+import 'dart:typed_data';
+
+import 'package:file_picker/file_picker.dart';
+import 'package:flutter/foundation.dart';
+import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
-import 'package:google_fonts/google_fonts.dart';
+import 'package:syncfusion_flutter_pdfviewer/pdfviewer.dart';
 
 import '../../application/controllers/smart_job_controller.dart';
+import '../../data/remote/smart_job_remote_sync.dart';
 import '../../domain/models/profile.dart';
 import '../../router/app_router.dart';
 import '../../theme/app_colors.dart';
-import '../../theme/smart_job_studio_theme.dart';
 import '../shared/widgets/smart_job_ui.dart';
-import 'widgets/cv_builder_config.dart';
 
 class CVScreen extends ConsumerStatefulWidget {
   const CVScreen({super.key});
@@ -20,17 +25,20 @@ class CVScreen extends ConsumerStatefulWidget {
 }
 
 class _CVScreenState extends ConsumerState<CVScreen> {
-  static const _fontFamilies = ['Inter', 'Poppins', 'Roboto', 'Playfair Display'];
-  static const _zoomLevels = [0.75, 1.0, 1.25];
-  static const _accentChoices = [
-    AppColors.midnight,
-    AppColors.info,
-    AppColors.teal,
-    AppColors.sand,
-    AppColors.coral,
-  ];
+  final PdfViewerController _pdfController = PdfViewerController();
 
   double _zoom = 1.0;
+  bool _isUploadingCv = false;
+  bool _isExportingPdf = false;
+  bool _isExportingWord = false;
+  double? _uploadProgress;
+  String _uploadStageLabel = 'Preparing upload...';
+
+  @override
+  void dispose() {
+    _pdfController.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -38,285 +46,1064 @@ class _CVScreenState extends ConsumerState<CVScreen> {
       smartJobControllerProvider.select((state) => state.profile),
     );
     final cv = profile.cvInsight;
-    final studioTheme = Theme.of(context).extension<SmartJobStudioTheme>()!;
-    final template = cvTemplateOptions.firstWhere(
-      (item) => item.title == cv.selectedTemplate,
-      orElse: () => cvTemplateOptions.first,
-    );
-    final accentColor = _hexToColor(cv.accentColorHex, template.defaultAccentColor);
-    final parsedCompletion = ((cv.sectionOrder.length / defaultCvSectionOrder.length) * 100)
-        .round()
-        .clamp(35, 100);
+    final previewData = _buildPreviewData(profile);
+    final exportDocument = _buildExportDocument(previewData, cv.sectionOrder);
+    final pdfBytes = _decodePreviewPdf(cv);
+    final averageScore =
+        ((cv.completionScore + cv.atsScore + cv.keywordMatchScore) / 3).round();
+    final healthStatus = _healthStatusFor(averageScore);
+    final remoteSync = ref.watch(smartJobRemoteSyncProvider);
 
-    return Stack(
-      children: [
-        SmartJobScrollPage(
-          maxWidth: 1380,
-          padding: const EdgeInsets.fromLTRB(24, 24, 24, 210),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              _HeroCard(
-                parsedCompletion: parsedCompletion,
-                lastEditedLabel: _timeAgo(cv.lastEditedAtIso),
-                onExport: () => _showMessage(context, 'PDF export will be connected next.'),
-                onEditContent: () => context.go(AppRoute.cvSetup),
-              ).animate().fade().slideY(begin: 0.04),
-              const SizedBox(height: 20),
-              _AnalyticsRow(cv: cv),
-              const SizedBox(height: 24),
-              LayoutBuilder(
-                builder: (context, constraints) {
-                  final previewCard = _StudioCard(
-                    title: 'Live CV Preview',
-                    subtitle: 'A polished A4 preview that updates instantly when the template, font, accent, or section order changes.',
-                    trailing: Wrap(
-                      spacing: 8,
-                      runSpacing: 8,
-                      children: [
-                        for (final zoomLevel in _zoomLevels)
-                          ChoiceChip(
-                            label: Text('${(zoomLevel * 100).round()}%'),
-                            selected: _zoom == zoomLevel,
-                            onSelected: (_) => setState(() => _zoom = zoomLevel),
-                          ),
-                      ],
-                    ),
-                    child: _PreviewPanel(
-                      zoom: _zoom,
-                      accentColor: accentColor,
-                      fontFamily: cv.fontFamily,
-                      template: template,
-                      sectionOrder: cv.sectionOrder,
-                      data: _previewData(profile),
-                    ),
-                  );
-
-                  final sideColumn = Column(
-                    children: [
-                      _StudioCard(
-                        title: 'Template Gallery',
-                        subtitle: 'Switch between ATS-safe and more expressive layouts without leaving the studio.',
-                        child: _TemplateGallery(
-                          activeTemplate: cv.selectedTemplate,
-                          onSelected: (templateOption) {
-                            ref.read(smartJobControllerProvider.notifier).updateCvStudioCustomization(
-                                  templateName: templateOption.title,
-                                  accentColorHex: _colorToHex(templateOption.defaultAccentColor),
-                                  fontFamily: templateOption.defaultFontFamily,
-                                );
-                          },
-                        ),
-                      ),
-                      const SizedBox(height: 18),
-                      _StudioCard(
-                        title: 'Customization',
-                        subtitle: 'Tune the accent color, font family, and section order for each application.',
-                        trailing: _StatusPill(label: _timeAgo(cv.lastEditedAtIso), highlighted: true),
-                        child: _CustomizationPanel(
-                          accentColor: accentColor,
-                          accentChoices: _accentChoices,
-                          fontFamilies: _fontFamilies,
-                          currentFontFamily: cv.fontFamily,
-                          sectionOrder: cv.sectionOrder,
-                          onAccentSelected: (color) {
-                            ref.read(smartJobControllerProvider.notifier).updateCvStudioCustomization(
-                                  accentColorHex: _colorToHex(color),
-                                );
-                          },
-                          onFontSelected: (fontFamily) {
-                            ref.read(smartJobControllerProvider.notifier).updateCvStudioCustomization(
-                                  fontFamily: fontFamily,
-                                );
-                          },
-                          onReorder: (order) {
-                            ref.read(smartJobControllerProvider.notifier).updateCvStudioCustomization(
-                                  sectionOrder: order,
-                                );
-                          },
-                        ),
-                      ),
-                    ],
-                  );
-
-                  if (constraints.maxWidth >= 1120) {
-                    return Row(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Expanded(flex: 7, child: previewCard),
-                        const SizedBox(width: 18),
-                        Expanded(flex: 5, child: sideColumn),
-                      ],
-                    );
-                  }
-
-                  return Column(
-                    children: [previewCard, const SizedBox(height: 18), sideColumn],
-                  );
-                },
+    return SmartJobScrollPage(
+      maxWidth: 1320,
+      padding: const EdgeInsets.fromLTRB(24, 24, 24, 140),
+      scrollViewKey: const PageStorageKey('cv-page-scroll'),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          _HeaderCard(
+            profile: profile,
+            status: healthStatus,
+            isUploading: _isUploadingCv,
+            onExport: () => _showExportSheet(context, profile, exportDocument),
+            onEdit: () => context.go(AppRoute.cvSetup),
+            onWorkspace: () => _showWorkspaceSheet(context, profile),
+          ),
+          const SizedBox(height: 20),
+          _HealthSummaryCard(
+            averageScore: averageScore,
+            status: healthStatus,
+            cards: [
+              _ScoreCardData(
+                title: 'CV Completion',
+                score: cv.completionScore,
+                description:
+                    'Measures how complete your summary, experience, education, and project coverage is.',
+              ),
+              _ScoreCardData(
+                title: 'ATS Score',
+                score: cv.atsScore,
+                description:
+                    'Measures how likely the CV is to pass automated recruiter screening.',
+                onTap: () => _showAtsBreakdown(context, profile),
+              ),
+              _ScoreCardData(
+                title: 'Keyword Match',
+                score: cv.keywordMatchScore,
+                description:
+                    'Measures alignment between your CV language and target role keywords.',
               ),
             ],
           ),
-        ),
-        Positioned(
-          left: 24,
-          right: 24,
-          bottom: 102,
-          child: SafeArea(
-            top: false,
-            child: Center(
-              child: ConstrainedBox(
-                constraints: const BoxConstraints(maxWidth: 1200),
-                child: Container(
-                  padding: const EdgeInsets.all(14),
-                  decoration: BoxDecoration(
-                    color: studioTheme.exportBar,
-                    borderRadius: BorderRadius.circular(24),
-                    border: Border.all(color: studioTheme.glassBorder),
-                  ),
-                  child: Wrap(
-                    spacing: 12,
-                    runSpacing: 12,
-                    children: [
-                      _BottomAction(
-                        icon: Icons.picture_as_pdf_outlined,
-                        label: 'Download PDF',
-                        filled: true,
-                        onTap: () => _showMessage(context, 'PDF export will be connected next.'),
-                      ),
-                      _BottomAction(
-                        icon: Icons.description_outlined,
-                        label: 'Download DOCX',
-                        onTap: () => _showMessage(context, 'DOCX export is queued next.'),
-                      ),
-                      _BottomAction(
-                        icon: Icons.link_outlined,
-                        label: 'Share public link',
-                        onTap: () => _showMessage(context, 'Public CV links will be enabled with backend sharing.'),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
+          const SizedBox(height: 24),
+          _PreviewShell(
+            fileName: cv.fileName,
+            zoom: _zoom,
+            onZoomChanged: _handleZoomChanged,
+            onExpand: pdfBytes == null
+                ? null
+                : () => _openFullscreenPdf(
+                      context,
+                      pdfBytes,
+                      cv.fileName,
+                    ),
+            onUpload: _isUploadingCv
+                ? null
+                : () => _pickAndConnectCv(profile, remoteSync),
+            isUploading: _isUploadingCv,
+            child: _buildPreviewBody(
+              context,
+              profile: profile,
+              cv: cv,
+              pdfBytes: pdfBytes,
+              remoteSync: remoteSync,
             ),
           ),
-        ),
-      ],
+          const SizedBox(height: 24),
+          LayoutBuilder(
+            builder: (context, constraints) {
+              final suggestions = _SuggestedKeywordsCard(
+                keywords: cv.missingKeywords,
+                onAdd: (keyword) => _addKeywordAndEdit(context, keyword),
+              );
+              final improveNext = _ImproveNextCard(
+                tips: cv.improvementTips,
+                onTapTip: (tip) => _openEditorForTip(context, tip),
+              );
+
+              if (constraints.maxWidth >= 980) {
+                return Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Expanded(child: suggestions),
+                    const SizedBox(width: 18),
+                    Expanded(child: improveNext),
+                  ],
+                );
+              }
+
+              return Column(
+                children: [
+                  suggestions,
+                  const SizedBox(height: 18),
+                  improveNext,
+                ],
+              );
+            },
+          ),
+        ],
+      ),
     );
   }
 
-  Map<String, dynamic> _previewData(UserProfile profile) {
+  void _handleZoomChanged(double value) {
+    setState(() => _zoom = value);
+    _pdfController.zoomLevel = value;
+  }
+
+  Widget _buildPreviewBody(
+    BuildContext context, {
+    required UserProfile profile,
+    required CvInsight cv,
+    required Uint8List? pdfBytes,
+    required SmartJobRemoteSync? remoteSync,
+  }) {
+    if (_isUploadingCv) {
+      return _PreviewLoadingState(
+        label: 'Uploading and preparing your CV preview...',
+        stageLabel: _uploadStageLabel,
+        progress: _uploadProgress,
+      );
+    }
+
+    if (!profile.hasUploadedCv) {
+      return _UploadEmptyState(
+        onUpload: () => _pickAndConnectCv(profile, remoteSync),
+        onBuildInstead: () => context.go(AppRoute.cvSetup),
+      );
+    }
+
+    if (pdfBytes != null) {
+      return _EmbeddedPdfPreview(
+        controller: _pdfController,
+        bytes: pdfBytes,
+      );
+    }
+
+    return _NonPdfPreviewState(
+      fileName: cv.fileName,
+      mimeType: cv.uploadedCvMimeType,
+      summary: cv.parsedSummary,
+      onUploadPdf: () => _pickAndConnectCv(profile, remoteSync),
+    );
+  }
+
+  Map<String, dynamic> _buildPreviewData(UserProfile profile) {
+    final contactLines = <String>[
+      if (!profile.hideContactInfo && profile.email.isNotEmpty) profile.email,
+      if (!profile.hideContactInfo && profile.phoneNumber.isNotEmpty)
+        profile.phoneNumber,
+      if (profile.location.isNotEmpty) profile.location,
+      if (profile.linkedInUrl.isNotEmpty) profile.linkedInUrl,
+      if (profile.portfolioUrl.isNotEmpty) profile.portfolioUrl,
+      if (profile.websiteUrl.isNotEmpty) profile.websiteUrl,
+    ];
+
     return {
       'name': profile.fullName.isEmpty ? 'Your Name' : profile.fullName,
-      'title': profile.headline.isEmpty ? 'Add your headline' : profile.headline,
+      'title': profile.headline.isEmpty
+          ? 'Add your headline'
+          : profile.headline,
       'summary': profile.cvInsight.parsedSummary,
-      'contact': [
-        if (!profile.hideContactInfo && profile.email.isNotEmpty) profile.email,
-        if (!profile.hideContactInfo && profile.phoneNumber.isNotEmpty) profile.phoneNumber,
-        if (profile.location.isNotEmpty) profile.location,
-        if (profile.linkedInUrl.isNotEmpty) profile.linkedInUrl,
-        if (profile.portfolioUrl.isNotEmpty) profile.portfolioUrl,
-        if (profile.websiteUrl.isNotEmpty) profile.websiteUrl,
-      ],
+      'contact': contactLines,
       'skills': profile.skills.isEmpty
           ? const ['Flutter', 'Dart', 'Firebase', 'REST APIs', 'Figma']
           : profile.skills,
       'experience': profile.experience.isEmpty
           ? const [
-              'Built premium mobile product features with Flutter and Firebase while improving clarity, polish, and delivery speed.',
-              'Worked with design and product stakeholders to ship structured user flows under short academic timelines.',
+              'Built premium mobile product features with Flutter and Firebase while improving polish, usability, and delivery speed.',
+              'Worked with design and product stakeholders to ship structured user flows and cleaner recruiter-facing presentation.',
             ]
           : profile.experience,
       'education': profile.education.isEmpty
           ? const ['BSc in Computer Science, University, 2026']
           : profile.education,
       'projects': profile.projects.isEmpty
-          ? const ['SmartJob capstone project focused on AI-assisted CV scoring, matching, and recruiter-ready exports.']
+          ? const [
+              'SmartJob capstone focused on AI-assisted CV scoring, matching, and recruiter-ready export flows.',
+            ]
           : profile.projects,
     };
   }
 
-  Color _hexToColor(String value, Color fallback) {
-    final normalized = value.replaceAll('#', '').trim();
-    if (normalized.length != 6) {
-      return fallback;
+  CvExportDocument _buildExportDocument(
+    Map<String, dynamic> previewData,
+    List<String> sectionOrder,
+  ) {
+    List<String> itemsFor(String section) {
+      return switch (section) {
+        'summary' => [previewData['summary'].toString()],
+        'skills' => (previewData['skills'] as List<dynamic>)
+            .map((item) => item.toString())
+            .toList(),
+        'experience' => (previewData['experience'] as List<dynamic>)
+            .map((item) => item.toString())
+            .toList(),
+        'education' => (previewData['education'] as List<dynamic>)
+            .map((item) => item.toString())
+            .toList(),
+        'projects' => (previewData['projects'] as List<dynamic>)
+            .map((item) => item.toString())
+            .toList(),
+        _ => const <String>[],
+      };
     }
-    final parsed = int.tryParse('FF$normalized', radix: 16);
-    return parsed == null ? fallback : Color(parsed);
+
+    final sections = <CvExportSection>[];
+    for (final section in sectionOrder) {
+      final items = itemsFor(section)
+          .where((item) => item.trim().isNotEmpty)
+          .toList();
+      if (items.isEmpty) {
+        continue;
+      }
+      sections.add(
+        CvExportSection(
+          title: _sectionLabel(section),
+          items: items,
+        ),
+      );
+    }
+
+    return CvExportDocument(
+      fullName: previewData['name'].toString(),
+      roleTitle: previewData['title'].toString(),
+      contactLines: (previewData['contact'] as List<dynamic>)
+          .map((item) => item.toString())
+          .where((item) => item.trim().isNotEmpty)
+          .toList(),
+      sections: sections,
+    );
   }
 
-  String _colorToHex(Color color) {
-    return '#${color.toARGB32().toRadixString(16).padLeft(8, '0').substring(2).toUpperCase()}';
+  Uint8List? _decodePreviewPdf(CvInsight cv) {
+    if (cv.uploadedCvMimeType != 'application/pdf' ||
+        cv.uploadedCvBase64.isEmpty) {
+      return null;
+    }
+    try {
+      return base64Decode(cv.uploadedCvBase64);
+    } catch (_) {
+      return null;
+    }
   }
 
-  String _timeAgo(String isoString) {
-    final editedAt = DateTime.tryParse(isoString);
-    if (editedAt == null) {
-      return 'Last edited just now';
+  Future<void> _pickAndConnectCv(
+    UserProfile profile,
+    SmartJobRemoteSync? remoteSync,
+  ) async {
+    setState(() {
+      _isUploadingCv = true;
+      _uploadProgress = 0.08;
+      _uploadStageLabel = 'Opening file picker...';
+    });
+
+    try {
+      final result = await FilePicker.platform.pickFiles(
+        allowMultiple: false,
+        type: FileType.custom,
+        allowedExtensions: const ['pdf', 'doc', 'docx'],
+        withData: true,
+      );
+
+      final selectedFile = result?.files.single;
+      if (selectedFile == null) {
+        return;
+      }
+
+      if (mounted) {
+        setState(() {
+          _uploadProgress = 0.22;
+          _uploadStageLabel = 'Reading ${selectedFile.name}...';
+        });
+      }
+
+      final bytes = await _readSelectedFileBytes(selectedFile);
+      if (bytes == null || bytes.isEmpty) {
+        if (mounted) {
+          _showMessage(
+            context,
+            'SmartJob could not read that file. Please choose another CV.',
+          );
+        }
+        return;
+      }
+
+      var remoteStoragePath = '';
+      if (remoteSync != null) {
+        if (mounted) {
+          setState(() {
+            _uploadProgress = 0.52;
+            _uploadStageLabel = 'Syncing CV to SmartJob cloud...';
+          });
+        }
+        remoteStoragePath = await remoteSync.uploadCv(
+          email: profile.email,
+          fileName: selectedFile.name,
+          bytes: bytes,
+        );
+      }
+
+      if (!mounted) {
+        return;
+      }
+
+      final mimeType = _mimeTypeForFileName(selectedFile.name);
+      setState(() {
+        _uploadProgress = 0.82;
+        _uploadStageLabel = mimeType == 'application/pdf'
+            ? 'Rendering live PDF preview...'
+            : 'Connecting CV and preparing workspace...';
+      });
+      ref.read(smartJobControllerProvider.notifier).connectUploadedCv(
+            fileName: selectedFile.name,
+            remoteStoragePath: remoteStoragePath,
+            uploadedCvBase64:
+                mimeType == 'application/pdf' ? base64Encode(bytes) : '',
+            uploadedCvMimeType: mimeType,
+          );
+
+      setState(() {
+        _uploadProgress = 1;
+        _uploadStageLabel = 'CV connected successfully.';
+      });
+      _showMessage(
+        context,
+        mimeType == 'application/pdf'
+            ? 'CV uploaded. Live PDF preview is ready.'
+            : 'CV uploaded. Word files are connected, but inline preview works for PDFs only.',
+      );
+    } catch (_) {
+      if (mounted) {
+        _showMessage(
+          context,
+          'Uploading your CV failed. Please try again.',
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isUploadingCv = false;
+          _uploadProgress = null;
+          _uploadStageLabel = 'Preparing upload...';
+        });
+      }
     }
-    final diff = DateTime.now().toUtc().difference(editedAt.toUtc());
-    if (diff.inSeconds < 60) {
-      return 'Last edited ${diff.inSeconds.clamp(1, 59)}s ago';
+  }
+
+  Future<void> _showExportSheet(
+    BuildContext context,
+    UserProfile profile,
+    CvExportDocument exportDocument,
+  ) async {
+    await showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: AppColors.surface(Theme.of(context).brightness),
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
+      ),
+      builder: (sheetContext) {
+        return SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(20, 16, 20, 20),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Export CV',
+                  style: Theme.of(context).textTheme.displaySmall,
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  'Choose how you want to export or share ${profile.cvInsight.fileName}.',
+                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                        color:
+                            AppColors.subtext(Theme.of(context).brightness),
+                      ),
+                ),
+                const SizedBox(height: 16),
+                _SheetActionTile(
+                  icon: Icons.picture_as_pdf_outlined,
+                  title: 'Download as PDF',
+                  subtitle: 'Best for recruiters and ATS systems.',
+                  onTap: _isExportingPdf
+                      ? null
+                      : () {
+                          Navigator.of(sheetContext).pop();
+                          _exportPdf(exportDocument);
+                        },
+                ),
+                _SheetActionTile(
+                  icon: Icons.description_outlined,
+                  title: 'Download as Word',
+                  subtitle: 'Exports a Word-compatible RTF document.',
+                  onTap: _isExportingWord
+                      ? null
+                      : () {
+                          Navigator.of(sheetContext).pop();
+                          _exportWord(exportDocument);
+                        },
+                ),
+                _SheetActionTile(
+                  icon: Icons.link_outlined,
+                  title: 'Copy shareable link',
+                  subtitle:
+                      'Copies a recruiter-friendly SmartJob CV link to your clipboard.',
+                  onTap: () async {
+                    await Clipboard.setData(
+                      ClipboardData(text: _shareableCvLink(profile)),
+                    );
+                    if (!context.mounted) {
+                      return;
+                    }
+                    Navigator.of(sheetContext).pop();
+                    _showMessage(context, 'Link copied to clipboard!');
+                  },
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  Future<void> _showWorkspaceSheet(
+    BuildContext context,
+    UserProfile profile,
+  ) async {
+    final controller = ref.read(smartJobControllerProvider.notifier);
+    final initialOrder = [...profile.cvInsight.sectionOrder];
+
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: AppColors.surface(Theme.of(context).brightness),
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
+      ),
+      builder: (sheetContext) {
+        var sectionOrder = [...initialOrder];
+        return StatefulBuilder(
+          builder: (context, setSheetState) {
+            return SafeArea(
+              child: Padding(
+                padding: EdgeInsets.fromLTRB(
+                  20,
+                  16,
+                  20,
+                  20 + MediaQuery.viewInsetsOf(context).bottom,
+                ),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Workspace settings',
+                      style: Theme.of(context).textTheme.displaySmall,
+                    ),
+                    const SizedBox(height: 6),
+                    Text(
+                      'Manage template context, sync state, and section order without taking space away from the CV preview.',
+                      style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                            color: AppColors.subtext(
+                              Theme.of(context).brightness,
+                            ),
+                          ),
+                    ),
+                    const SizedBox(height: 16),
+                    _InfoTile(
+                      label: 'Selected template',
+                      value: profile.cvInsight.selectedTemplate,
+                    ),
+                    const SizedBox(height: 12),
+                    _InfoTile(
+                      label: 'Font family',
+                      value: profile.cvInsight.fontFamily,
+                    ),
+                    const SizedBox(height: 12),
+                    _InfoTile(
+                      label: 'Cloud sync',
+                      value: profile.cvInsight.remoteStoragePath.isEmpty
+                          ? 'Local only'
+                          : 'Connected to cloud storage',
+                    ),
+                    const SizedBox(height: 18),
+                    Text(
+                      'Section order',
+                      style: Theme.of(context).textTheme.headlineMedium,
+                    ),
+                    const SizedBox(height: 10),
+                    SizedBox(
+                      height: 280,
+                      child: ReorderableListView.builder(
+                        itemCount: sectionOrder.length,
+                        onReorder: (oldIndex, newIndex) {
+                          final updated = [...sectionOrder];
+                          if (newIndex > oldIndex) {
+                            newIndex -= 1;
+                          }
+                          final moved = updated.removeAt(oldIndex);
+                          updated.insert(newIndex, moved);
+                          setSheetState(() => sectionOrder = updated);
+                          controller.updateCvStudioCustomization(
+                            sectionOrder: updated,
+                          );
+                        },
+                        itemBuilder: (context, index) {
+                          final section = sectionOrder[index];
+                          return Container(
+                            key: ValueKey(section),
+                            margin: const EdgeInsets.only(bottom: 10),
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 14,
+                              vertical: 14,
+                            ),
+                            decoration: BoxDecoration(
+                              color: AppColors.surfaceMuted(
+                                Theme.of(context).brightness,
+                              ),
+                              borderRadius: BorderRadius.circular(18),
+                              border: Border.all(
+                                color: AppColors.stroke(
+                                  Theme.of(context).brightness,
+                                ),
+                              ),
+                            ),
+                            child: Row(
+                              children: [
+                                Expanded(
+                                  child: Text(_sectionLabel(section)),
+                                ),
+                                Icon(
+                                  Icons.drag_indicator,
+                                  color: AppColors.subtext(
+                                    Theme.of(context).brightness,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          );
+                        },
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+
+  Future<void> _showAtsBreakdown(
+    BuildContext context,
+    UserProfile profile,
+  ) async {
+    final cv = profile.cvInsight;
+    final formattingScore = math.max(40, cv.atsScore - 6).clamp(0, 100);
+    final keywordDensity = math.min(100, cv.keywordMatchScore + 4).clamp(0, 100);
+    final sectionCompleteness =
+        math.min(100, cv.completionScore + 8).clamp(0, 100);
+    final fileCompatibility =
+        profile.hasUploadedCv && cv.uploadedCvMimeType == 'application/pdf'
+            ? 96
+            : 72;
+
+    await showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: AppColors.surface(Theme.of(context).brightness),
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
+      ),
+      builder: (sheetContext) {
+        return SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(20, 16, 20, 20),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'ATS Score Breakdown',
+                  style: Theme.of(context).textTheme.displaySmall,
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  'A recruiter-grade breakdown of what currently helps or hurts automated screening.',
+                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                        color:
+                            AppColors.subtext(Theme.of(context).brightness),
+                      ),
+                ),
+                const SizedBox(height: 18),
+                _BreakdownRow(
+                  label: 'Formatting score',
+                  score: formattingScore,
+                ),
+                _BreakdownRow(
+                  label: 'Keyword density',
+                  score: keywordDensity,
+                ),
+                _BreakdownRow(
+                  label: 'Section completeness',
+                  score: sectionCompleteness,
+                ),
+                _BreakdownRow(
+                  label: 'File compatibility',
+                  score: fileCompatibility,
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  Future<void> _openFullscreenPdf(
+    BuildContext context,
+    Uint8List bytes,
+    String fileName,
+  ) async {
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (context) => Scaffold(
+          appBar: AppBar(title: Text(fileName)),
+          body: SafeArea(
+            child: SfPdfViewer.memory(
+              bytes,
+              pageSpacing: 12,
+              canShowPaginationDialog: false,
+              canShowScrollHead: false,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  void _addKeywordAndEdit(BuildContext context, String keyword) {
+    final profile = ref.read(smartJobControllerProvider).profile;
+    final alreadyExists = profile.skills.any(
+      (skill) => skill.toLowerCase() == keyword.toLowerCase(),
+    );
+
+    if (!alreadyExists) {
+      ref.read(smartJobControllerProvider.notifier).addProfileEntry(
+            CvCollectionSection.skills,
+            keyword,
+          );
     }
-    if (diff.inMinutes < 60) {
-      return 'Last edited ${diff.inMinutes}m ago';
+
+    _showMessage(
+      context,
+      alreadyExists
+          ? '$keyword is already in your Skills section.'
+          : '$keyword added to Skills. Opening editor...',
+    );
+    context.go('${AppRoute.cvSetup}?section=skills');
+  }
+
+  void _openEditorForTip(BuildContext context, String tip) {
+    _showMessage(context, 'Opening the editor for: $tip');
+    context.go('${AppRoute.cvSetup}?section=${_editorSectionForTip(tip)}');
+  }
+
+  Future<Uint8List?> _readSelectedFileBytes(PlatformFile file) async {
+    final bytes = file.bytes;
+    if (bytes != null && bytes.isNotEmpty) {
+      return bytes;
     }
-    return 'Last edited ${diff.inHours}h ago';
+
+    final stream = file.readStream;
+    if (stream == null) {
+      return null;
+    }
+
+    final builder = BytesBuilder(copy: false);
+    await for (final chunk in stream) {
+      builder.add(chunk);
+    }
+    final streamedBytes = builder.takeBytes();
+    return streamedBytes.isEmpty ? null : streamedBytes;
+  }
+
+  String _mimeTypeForFileName(String fileName) {
+    final lower = fileName.toLowerCase();
+    if (lower.endsWith('.pdf')) {
+      return 'application/pdf';
+    }
+    if (lower.endsWith('.doc')) {
+      return 'application/msword';
+    }
+    if (lower.endsWith('.docx')) {
+      return 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+    }
+    return 'application/octet-stream';
+  }
+
+  String _shareableCvLink(UserProfile profile) {
+    final seed = profile.smartInboxAlias.isNotEmpty
+        ? profile.smartInboxAlias
+        : profile.email;
+    final slug = seed
+        .toLowerCase()
+        .replaceAll(RegExp(r'[^a-z0-9]+'), '-')
+        .replaceAll(RegExp(r'^-+|-+$'), '');
+    return 'https://smartjob.app/cv/${slug.isEmpty ? 'candidate' : slug}';
+  }
+
+  Future<void> _exportPdf(CvExportDocument document) async {
+    setState(() => _isExportingPdf = true);
+    try {
+      await _saveExportFile(
+        fileName: '${_exportBaseName(document.fullName)}.pdf',
+        dialogTitle: 'Save SmartJob CV as PDF',
+        extensions: const ['pdf'],
+        bytes: buildCvPdfBytes(document),
+        successLabel: 'PDF export complete.',
+      );
+    } catch (_) {
+      if (mounted) {
+        _showMessage(context, 'Exporting PDF failed. Please try again.');
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _isExportingPdf = false);
+      }
+    }
+  }
+
+  Future<void> _exportWord(CvExportDocument document) async {
+    setState(() => _isExportingWord = true);
+    try {
+      await _saveExportFile(
+        fileName: '${_exportBaseName(document.fullName)}.rtf',
+        dialogTitle: 'Save SmartJob CV as Word document',
+        extensions: const ['rtf'],
+        bytes: buildCvWordBytes(document),
+        successLabel: 'Word export complete.',
+      );
+    } catch (_) {
+      if (mounted) {
+        _showMessage(
+          context,
+          'Exporting Word document failed. Please try again.',
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _isExportingWord = false);
+      }
+    }
+  }
+
+  Future<void> _saveExportFile({
+    required String fileName,
+    required String dialogTitle,
+    required List<String> extensions,
+    required Uint8List bytes,
+    required String successLabel,
+  }) async {
+    final savedPath = await FilePicker.platform.saveFile(
+      dialogTitle: dialogTitle,
+      fileName: fileName,
+      type: FileType.custom,
+      allowedExtensions: extensions,
+      bytes: bytes,
+    );
+
+    if (!mounted) {
+      return;
+    }
+
+    if (!kIsWeb && savedPath == null) {
+      _showMessage(context, 'Export cancelled.');
+      return;
+    }
+
+    final message = kIsWeb || savedPath == null
+        ? successLabel
+        : '$successLabel Saved to $savedPath';
+    _showMessage(context, message);
+  }
+
+  String _exportBaseName(String fullName) {
+    final seed = fullName.trim().isEmpty
+        ? 'smartjob_cv'
+        : '${fullName.trim()} smartjob cv';
+    final normalized = seed
+        .toLowerCase()
+        .replaceAll(RegExp(r'[^a-z0-9]+'), '_')
+        .replaceAll(RegExp(r'^_+|_+$'), '');
+    return normalized.isEmpty ? 'smartjob_cv' : normalized;
+  }
+
+  _HealthStatus _healthStatusFor(int score) {
+    if (score >= 70) {
+      return const _HealthStatus('Excellent', AppColors.success);
+    }
+    if (score >= 41) {
+      return const _HealthStatus('Good', AppColors.warning);
+    }
+    return const _HealthStatus('Needs Improvement', AppColors.danger);
   }
 
   void _showMessage(BuildContext context, String message) {
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(message)),
+    );
   }
 }
 
-class _HeroCard extends StatelessWidget {
-  const _HeroCard({
-    required this.parsedCompletion,
-    required this.lastEditedLabel,
+class _HeaderCard extends StatelessWidget {
+  const _HeaderCard({
+    required this.profile,
+    required this.status,
+    required this.isUploading,
     required this.onExport,
-    required this.onEditContent,
+    required this.onEdit,
+    required this.onWorkspace,
   });
 
-  final int parsedCompletion;
-  final String lastEditedLabel;
+  final UserProfile profile;
+  final _HealthStatus status;
+  final bool isUploading;
   final VoidCallback onExport;
-  final VoidCallback onEditContent;
+  final VoidCallback onEdit;
+  final VoidCallback onWorkspace;
 
   @override
   Widget build(BuildContext context) {
+    final brightness = Theme.of(context).brightness;
+    final initials = _initialsFor(profile.fullName);
+
     return SmartJobPanel(
       radius: 24,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text('Your CV is connected to SmartJob', style: Theme.of(context).textTheme.displayMedium),
-          const SizedBox(height: 12),
-          Wrap(
-            spacing: 10,
-            runSpacing: 10,
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final intro = Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const _StatusPill(label: 'Uploaded'),
-              const _StatusPill(label: 'Autosaved'),
-              _StatusPill(label: 'Sections parsed $parsedCompletion%'),
-              _StatusPill(label: lastEditedLabel, highlighted: true),
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  CircleAvatar(
+                    radius: 28,
+                    backgroundColor: AppColors.midnight,
+                    child: Text(
+                      initials,
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 14),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          profile.fullName.isEmpty
+                              ? 'Your CV workspace'
+                              : profile.fullName,
+                          style: Theme.of(context).textTheme.displaySmall,
+                        ),
+                        const SizedBox(height: 6),
+                        Text(
+                          'A cleaner, recruiter-grade CV space for uploads, live preview, scoring, and export.',
+                          style:
+                              Theme.of(context).textTheme.bodyMedium?.copyWith(
+                                    color: AppColors.subtext(brightness),
+                                  ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 14),
+              Wrap(
+                spacing: 10,
+                runSpacing: 10,
+                children: [
+                  _StatusPill(
+                    icon:
+                        profile.hasUploadedCv ? Icons.cloud_done : Icons.upload,
+                    label: profile.hasUploadedCv ? 'Uploaded' : 'Awaiting upload',
+                  ),
+                  _StatusPill(
+                    icon: isUploading ? Icons.sync : Icons.check_circle_outline,
+                    label: isUploading ? 'Saving...' : 'Autosaved',
+                    highlighted: isUploading,
+                  ),
+                  _StatusPill(
+                    icon: Icons.schedule,
+                    label: _lastEditedAgo(profile.cvInsight.lastEditedAtIso),
+                  ),
+                  _StatusPill(
+                    icon: Icons.favorite_border,
+                    label: status.label,
+                    highlighted: true,
+                    accent: status.color,
+                  ),
+                ],
+              ),
             ],
-          ),
-          const SizedBox(height: 18),
-          Wrap(
+          );
+
+          final actions = Wrap(
             spacing: 12,
             runSpacing: 12,
             children: [
               ElevatedButton.icon(
                 onPressed: onExport,
-                icon: const Icon(Icons.picture_as_pdf_outlined),
-                label: const Text('Export PDF'),
+                icon: const Icon(Icons.file_download_outlined),
+                label: const Text('Export CV'),
               ),
               OutlinedButton.icon(
-                onPressed: onEditContent,
+                onPressed: onEdit,
                 icon: const Icon(Icons.edit_outlined),
                 label: const Text('Edit content'),
               ),
+              OutlinedButton.icon(
+                onPressed: onWorkspace,
+                icon: const Icon(Icons.tune_outlined),
+                label: const Text('Workspace'),
+              ),
             ],
+          );
+
+          if (constraints.maxWidth >= 980) {
+            return Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Expanded(child: intro),
+                const SizedBox(width: 20),
+                ConstrainedBox(
+                  constraints: const BoxConstraints(maxWidth: 340),
+                  child: actions,
+                ),
+              ],
+            );
+          }
+
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              intro,
+              const SizedBox(height: 18),
+              actions,
+            ],
+          );
+        },
+      ),
+    );
+  }
+}
+
+class _HealthSummaryCard extends StatelessWidget {
+  const _HealthSummaryCard({
+    required this.averageScore,
+    required this.status,
+    required this.cards,
+  });
+
+  final int averageScore;
+  final _HealthStatus status;
+  final List<_ScoreCardData> cards;
+
+  @override
+  Widget build(BuildContext context) {
+    final brightness = Theme.of(context).brightness;
+
+    return SmartJobPanel(
+      radius: 24,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Wrap(
+            crossAxisAlignment: WrapCrossAlignment.center,
+            spacing: 12,
+            runSpacing: 12,
+            children: [
+              Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 14,
+                  vertical: 10,
+                ),
+                decoration: BoxDecoration(
+                  color: status.color.withValues(alpha: 0.14),
+                  borderRadius: BorderRadius.circular(999),
+                  border: Border.all(
+                    color: status.color.withValues(alpha: 0.38),
+                  ),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(Icons.monitor_heart_outlined, color: status.color),
+                    const SizedBox(width: 8),
+                    Text(
+                      'CV Health: ${status.label}',
+                      style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                            color: status.color,
+                            fontWeight: FontWeight.w700,
+                          ),
+                    ),
+                  ],
+                ),
+              ),
+              Text(
+                '$averageScore / 100',
+                style: Theme.of(context).textTheme.headlineLarge,
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          Text(
+            'These scores help you see whether your CV is complete, ATS-friendly, and aligned to the job language you are targeting.',
+            style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                  color: AppColors.subtext(brightness),
+                ),
+          ),
+          const SizedBox(height: 20),
+          LayoutBuilder(
+            builder: (context, constraints) {
+              if (constraints.maxWidth >= 980) {
+                return Row(
+                  children: [
+                    for (var i = 0; i < cards.length; i++) ...[
+                      Expanded(child: _CircularScoreCard(data: cards[i])),
+                      if (i != cards.length - 1) const SizedBox(width: 16),
+                    ],
+                  ],
+                );
+              }
+
+              return Column(
+                children: [
+                  for (var i = 0; i < cards.length; i++) ...[
+                    _CircularScoreCard(data: cards[i]),
+                    if (i != cards.length - 1) const SizedBox(height: 14),
+                  ],
+                ],
+              );
+            },
           ),
         ],
       ),
@@ -324,90 +1111,217 @@ class _HeroCard extends StatelessWidget {
   }
 }
 
-class _AnalyticsRow extends StatelessWidget {
-  const _AnalyticsRow({required this.cv});
+class _CircularScoreCard extends StatelessWidget {
+  const _CircularScoreCard({required this.data});
 
-  final CvInsight cv;
+  final _ScoreCardData data;
 
   @override
   Widget build(BuildContext context) {
-    final cards = [
-      SmartJobProgressPill(
-        value: cv.completionScore,
-        total: 100,
-        label: 'CV completion',
-        color: AppColors.midnight,
-        helpMessage: 'Shows how complete the document is across the core resume sections.',
-      ),
-      SmartJobProgressPill(
-        value: cv.atsScore,
-        total: 100,
-        label: 'ATS score',
-        color: AppColors.teal,
-        helpMessage: 'Estimates parser friendliness and overall structure quality for applicant tracking systems.',
-      ),
-      SmartJobProgressPill(
-        value: cv.keywordMatchScore,
-        total: 100,
-        label: 'Keyword match',
-        color: AppColors.sand,
-        helpMessage: 'Compares your CV language against the roles and skills SmartJob is prioritizing.',
-      ),
-    ];
+    final brightness = Theme.of(context).brightness;
+    final ringColor = _scoreColor(data.score);
 
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        if (constraints.maxWidth >= 920) {
-          return Row(
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: data.onTap,
+        borderRadius: BorderRadius.circular(22),
+        child: Ink(
+          padding: const EdgeInsets.all(18),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(22),
+            color: AppColors.surfaceMuted(brightness).withValues(alpha: 0.52),
+            border: Border.all(color: AppColors.stroke(brightness)),
+          ),
+          child: Row(
             children: [
-              for (var index = 0; index < cards.length; index++) ...[
-                Expanded(child: cards[index]),
-                if (index < cards.length - 1) const SizedBox(width: 14),
-              ],
+              TweenAnimationBuilder<double>(
+                tween: Tween<double>(
+                  begin: 0,
+                  end: data.score / 100,
+                ),
+                duration: const Duration(milliseconds: 650),
+                curve: Curves.easeOutCubic,
+                builder: (context, value, child) {
+                  return Stack(
+                    alignment: Alignment.center,
+                    children: [
+                      SizedBox(
+                        width: 82,
+                        height: 82,
+                        child: CircularProgressIndicator(
+                          value: value,
+                          strokeWidth: 9,
+                          color: ringColor,
+                          backgroundColor:
+                              AppColors.surface(brightness),
+                        ),
+                      ),
+                      Text(
+                        '${data.score}',
+                        style:
+                            Theme.of(context).textTheme.headlineSmall?.copyWith(
+                                  fontWeight: FontWeight.w800,
+                                ),
+                      ),
+                    ],
+                  );
+                },
+              ),
+              const SizedBox(width: 18),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            data.title,
+                            style:
+                                Theme.of(context).textTheme.titleMedium?.copyWith(
+                                      fontWeight: FontWeight.w700,
+                                    ),
+                          ),
+                        ),
+                        if (data.onTap != null)
+                          Tooltip(
+                            message: 'View breakdown',
+                            child: Icon(
+                              Icons.open_in_new,
+                              size: 18,
+                              color: AppColors.subtext(brightness),
+                            ),
+                          ),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      data.description,
+                      style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                            color: AppColors.subtext(brightness),
+                          ),
+                    ),
+                  ],
+                ),
+              ),
             ],
-          );
-        }
-
-        return Column(
-          children: [
-            for (var index = 0; index < cards.length; index++) ...[
-              cards[index],
-              if (index < cards.length - 1) const SizedBox(height: 14),
-            ],
-          ],
-        );
-      },
+          ),
+        ),
+      ),
     );
   }
 }
 
-class _StudioCard extends StatelessWidget {
-  const _StudioCard({
-    required this.title,
-    required this.subtitle,
+class _PreviewShell extends StatelessWidget {
+  const _PreviewShell({
+    required this.fileName,
+    required this.zoom,
+    required this.onZoomChanged,
+    required this.onExpand,
+    required this.onUpload,
+    required this.isUploading,
     required this.child,
-    this.trailing,
   });
 
-  final String title;
-  final String subtitle;
+  final String fileName;
+  final double zoom;
+  final ValueChanged<double> onZoomChanged;
+  final VoidCallback? onExpand;
+  final VoidCallback? onUpload;
+  final bool isUploading;
   final Widget child;
-  final Widget? trailing;
 
   @override
   Widget build(BuildContext context) {
-    final studioTheme = Theme.of(context).extension<SmartJobStudioTheme>()!;
-    return Container(
-      padding: const EdgeInsets.all(22),
-      decoration: BoxDecoration(
-        color: studioTheme.glassPanel,
-        borderRadius: BorderRadius.circular(24),
-        border: Border.all(color: studioTheme.glassBorder),
-      ),
+    final brightness = Theme.of(context).brightness;
+
+    return SmartJobPanel(
+      radius: 24,
       child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          SmartJobSectionHeader(title: title, subtitle: subtitle, trailing: trailing),
+          LayoutBuilder(
+            builder: (context, constraints) {
+              final titleBlock = Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Live CV Preview',
+                    style: Theme.of(context).textTheme.displaySmall,
+                  ),
+                  const SizedBox(height: 6),
+                  Text(
+                    fileName.isEmpty
+                        ? 'Upload a PDF CV to see the real document here.'
+                        : 'Rendering $fileName directly inside your SmartJob workspace.',
+                    style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                          color: AppColors.subtext(brightness),
+                        ),
+                  ),
+                ],
+              );
+
+              final controls = Wrap(
+                spacing: 10,
+                runSpacing: 10,
+                children: [
+                  Container(
+                    padding: const EdgeInsets.all(4),
+                    decoration: BoxDecoration(
+                      borderRadius: BorderRadius.circular(999),
+                      border: Border.all(color: AppColors.stroke(brightness)),
+                      color: AppColors.surfaceMuted(brightness),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        for (final level in [0.85, 1.0, 1.15])
+                          Padding(
+                            padding: const EdgeInsets.symmetric(horizontal: 2),
+                            child: ChoiceChip(
+                              label: Text('${(level * 100).round()}%'),
+                              selected: zoom == level,
+                              onSelected: (_) => onZoomChanged(level),
+                            ),
+                          ),
+                      ],
+                    ),
+                  ),
+                  IconButton.filledTonal(
+                    onPressed: onExpand,
+                    tooltip: 'Open fullscreen preview',
+                    icon: const Icon(Icons.open_in_full),
+                  ),
+                  OutlinedButton.icon(
+                    onPressed: isUploading ? null : onUpload,
+                    icon: const Icon(Icons.upload_file_outlined),
+                    label: Text(isUploading ? 'Uploading...' : 'Replace CV'),
+                  ),
+                ],
+              );
+
+              if (constraints.maxWidth >= 1040) {
+                return Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Expanded(child: titleBlock),
+                    const SizedBox(width: 16),
+                    Flexible(child: controls),
+                  ],
+                );
+              }
+
+              return Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  titleBlock,
+                  const SizedBox(height: 14),
+                  controls,
+                ],
+              );
+            },
+          ),
           const SizedBox(height: 18),
           child,
         ],
@@ -416,484 +1330,1149 @@ class _StudioCard extends StatelessWidget {
   }
 }
 
-class _StatusPill extends StatelessWidget {
-  const _StatusPill({required this.label, this.highlighted = false});
-
-  final String label;
-  final bool highlighted;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-      decoration: BoxDecoration(
-        color: highlighted ? AppColors.teal.withValues(alpha: 0.16) : AppColors.surfaceMuted(Theme.of(context).brightness),
-        borderRadius: BorderRadius.circular(999),
-        border: Border.all(color: AppColors.stroke(Theme.of(context).brightness)),
-      ),
-      child: Text(label, style: Theme.of(context).textTheme.bodySmall),
-    );
-  }
-}
-
-class _PreviewPanel extends StatelessWidget {
-  const _PreviewPanel({
-    required this.zoom,
-    required this.accentColor,
-    required this.fontFamily,
-    required this.template,
-    required this.sectionOrder,
-    required this.data,
+class _EmbeddedPdfPreview extends StatefulWidget {
+  const _EmbeddedPdfPreview({
+    required this.controller,
+    required this.bytes,
   });
 
-  final double zoom;
-  final Color accentColor;
-  final String fontFamily;
-  final CvTemplateOption template;
-  final List<String> sectionOrder;
-  final Map<String, dynamic> data;
+  final PdfViewerController controller;
+  final Uint8List bytes;
+
+  @override
+  State<_EmbeddedPdfPreview> createState() => _EmbeddedPdfPreviewState();
+}
+
+class _EmbeddedPdfPreviewState extends State<_EmbeddedPdfPreview> {
+  bool _isLoaded = false;
 
   @override
   Widget build(BuildContext context) {
-    final studioTheme = Theme.of(context).extension<SmartJobStudioTheme>()!;
     return Container(
-      height: 940,
+      height: 860,
       decoration: BoxDecoration(
-        color: studioTheme.glassStrong,
         borderRadius: BorderRadius.circular(22),
+        color: Colors.white,
       ),
-      child: Scrollbar(
-        thumbVisibility: true,
-        child: SingleChildScrollView(
-          padding: const EdgeInsets.all(20),
-          child: Center(
-            child: AnimatedSwitcher(
-              duration: const Duration(milliseconds: 320),
-              child: Transform.scale(
-                key: ValueKey('${template.title}-${accentColor.toARGB32()}-$fontFamily-${sectionOrder.join(',')}'),
-                scale: zoom,
-                alignment: Alignment.topCenter,
-                child: SizedBox(
-                  width: 720,
-                  child: AspectRatio(
-                    aspectRatio: 1 / 1.4142,
-                    child: _ResumeDocument(
-                      template: template,
-                      accentColor: accentColor,
-                      fontFamily: fontFamily,
-                      sectionOrder: sectionOrder,
-                      data: data,
-                    ),
-                  ),
-                ),
-              ),
+      clipBehavior: Clip.antiAlias,
+      child: Stack(
+        fit: StackFit.expand,
+        children: [
+          SfPdfViewer.memory(
+            widget.bytes,
+            key: ValueKey(widget.bytes.length),
+            controller: widget.controller,
+            pageSpacing: 10,
+            canShowScrollHead: false,
+            canShowPaginationDialog: false,
+            onDocumentLoaded: (_) {
+              if (mounted) {
+                setState(() => _isLoaded = true);
+              }
+            },
+          ),
+          IgnorePointer(
+            ignoring: _isLoaded,
+            child: AnimatedOpacity(
+              duration: const Duration(milliseconds: 220),
+              opacity: _isLoaded ? 0 : 1,
+              child: const _PdfPreviewSkeleton(),
             ),
           ),
-        ),
+        ],
       ),
     );
   }
 }
 
-class _TemplateGallery extends StatelessWidget {
-  const _TemplateGallery({required this.activeTemplate, required this.onSelected});
-
-  final String activeTemplate;
-  final ValueChanged<CvTemplateOption> onSelected;
-
-  @override
-  Widget build(BuildContext context) {
-    return GridView.builder(
-      itemCount: cvTemplateOptions.length,
-      shrinkWrap: true,
-      physics: const NeverScrollableScrollPhysics(),
-      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-        crossAxisCount: 2,
-        crossAxisSpacing: 14,
-        mainAxisSpacing: 14,
-        childAspectRatio: 1.02,
-      ),
-      itemBuilder: (context, index) {
-        final option = cvTemplateOptions[index];
-        final isActive = option.title == activeTemplate;
-        return InkWell(
-          onTap: () => onSelected(option),
-          borderRadius: BorderRadius.circular(20),
-          child: AnimatedContainer(
-            duration: const Duration(milliseconds: 220),
-            padding: const EdgeInsets.all(14),
-            decoration: BoxDecoration(
-              color: isActive ? option.previewAccent.withValues(alpha: 0.22) : AppColors.surfaceMuted(Theme.of(context).brightness).withValues(alpha: 0.72),
-              borderRadius: BorderRadius.circular(20),
-              border: Border.all(color: isActive ? option.previewAccent : AppColors.stroke(Theme.of(context).brightness)),
-            ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Container(
-                  height: 112,
-                  padding: const EdgeInsets.all(10),
-                  decoration: BoxDecoration(
-                    color: option.previewCanvas,
-                    borderRadius: BorderRadius.circular(14),
-                    border: Border.all(color: option.borderColor),
-                  ),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Container(width: 52, height: 6, decoration: BoxDecoration(color: option.previewAccent, borderRadius: BorderRadius.circular(99))),
-                      const SizedBox(height: 8),
-                      Container(width: double.infinity, height: 14, decoration: BoxDecoration(color: option.previewAccent.withValues(alpha: 0.78), borderRadius: BorderRadius.circular(8))),
-                      const SizedBox(height: 8),
-                      Container(width: 92, height: 6, decoration: BoxDecoration(color: option.previewBar, borderRadius: BorderRadius.circular(99))),
-                      const SizedBox(height: 12),
-                      Expanded(child: Container(decoration: BoxDecoration(color: option.previewBar, borderRadius: BorderRadius.circular(12)))),
-                    ],
-                  ),
-                ),
-                const SizedBox(height: 12),
-                if (isActive) const _StatusPill(label: 'Currently selected'),
-                if (isActive) const SizedBox(height: 8),
-                Text(option.title, maxLines: 2, overflow: TextOverflow.ellipsis, style: Theme.of(context).textTheme.bodyMedium),
-                const SizedBox(height: 6),
-                Text(option.caption, maxLines: 2, overflow: TextOverflow.ellipsis, style: Theme.of(context).textTheme.bodySmall?.copyWith(color: AppColors.subtext(Theme.of(context).brightness))),
-              ],
-            ),
-          ),
-        );
-      },
-    );
-  }
-}
-
-class _CustomizationPanel extends StatelessWidget {
-  const _CustomizationPanel({
-    required this.accentColor,
-    required this.accentChoices,
-    required this.fontFamilies,
-    required this.currentFontFamily,
-    required this.sectionOrder,
-    required this.onAccentSelected,
-    required this.onFontSelected,
-    required this.onReorder,
+class _PreviewLoadingState extends StatelessWidget {
+  const _PreviewLoadingState({
+    required this.label,
+    required this.stageLabel,
+    required this.progress,
   });
 
-  final Color accentColor;
-  final List<Color> accentChoices;
-  final List<String> fontFamilies;
-  final String currentFontFamily;
-  final List<String> sectionOrder;
-  final ValueChanged<Color> onAccentSelected;
-  final ValueChanged<String> onFontSelected;
-  final ValueChanged<List<String>> onReorder;
-
-  @override
-  Widget build(BuildContext context) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text('Accent color', style: Theme.of(context).textTheme.headlineMedium),
-        const SizedBox(height: 12),
-        Wrap(
-          spacing: 10,
-          runSpacing: 10,
-          children: [
-            for (final color in accentChoices)
-              InkWell(
-                onTap: () => onAccentSelected(color),
-                borderRadius: BorderRadius.circular(999),
-                child: Container(
-                  width: 38,
-                  height: 38,
-                  decoration: BoxDecoration(
-                    color: color,
-                    shape: BoxShape.circle,
-                    border: Border.all(color: color.toARGB32() == accentColor.toARGB32() ? Colors.white : Colors.transparent, width: 2),
-                  ),
-                ),
-              ),
-          ],
-        ),
-        const SizedBox(height: 20),
-        DropdownButtonFormField<String>(
-          initialValue: fontFamilies.contains(currentFontFamily) ? currentFontFamily : fontFamilies.first,
-          decoration: const InputDecoration(labelText: 'Font family'),
-          items: fontFamilies.map((family) => DropdownMenuItem<String>(value: family, child: Text(family))).toList(),
-          onChanged: (value) {
-            if (value != null) {
-              onFontSelected(value);
-            }
-          },
-        ),
-        const SizedBox(height: 20),
-        Text('Section order', style: Theme.of(context).textTheme.headlineMedium),
-        const SizedBox(height: 10),
-        ReorderableListView.builder(
-          shrinkWrap: true,
-          physics: const NeverScrollableScrollPhysics(),
-          itemCount: sectionOrder.length,
-          buildDefaultDragHandles: false,
-          onReorder: (oldIndex, newIndex) {
-            final updated = [...sectionOrder];
-            if (newIndex > oldIndex) {
-              newIndex -= 1;
-            }
-            final moved = updated.removeAt(oldIndex);
-            updated.insert(newIndex, moved);
-            onReorder(updated);
-          },
-          itemBuilder: (context, index) {
-            final section = sectionOrder[index];
-            return Container(
-              key: ValueKey(section),
-              margin: const EdgeInsets.only(bottom: 10),
-              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
-              decoration: BoxDecoration(
-                color: AppColors.surfaceMuted(Theme.of(context).brightness),
-                borderRadius: BorderRadius.circular(18),
-                border: Border.all(color: AppColors.stroke(Theme.of(context).brightness)),
-              ),
-              child: Row(
-                children: [
-                  Expanded(child: Text(_sectionLabel(section))),
-                  ReorderableDragStartListener(index: index, child: const Icon(Icons.drag_indicator)),
-                ],
-              ),
-            );
-          },
-        ),
-      ],
-    );
-  }
-}
-
-class _BottomAction extends StatelessWidget {
-  const _BottomAction({required this.icon, required this.label, required this.onTap, this.filled = false});
-
-  final IconData icon;
   final String label;
-  final VoidCallback onTap;
-  final bool filled;
+  final String stageLabel;
+  final double? progress;
 
   @override
   Widget build(BuildContext context) {
-    final button = filled
-        ? ElevatedButton.icon(onPressed: onTap, icon: Icon(icon), label: Text(label))
-        : OutlinedButton.icon(onPressed: onTap, icon: Icon(icon), label: Text(label));
-    return SizedBox(width: 220, child: button);
-  }
-}
-
-class _ResumeDocument extends StatelessWidget {
-  const _ResumeDocument({
-    required this.template,
-    required this.accentColor,
-    required this.fontFamily,
-    required this.sectionOrder,
-    required this.data,
-  });
-
-  final CvTemplateOption template;
-  final Color accentColor;
-  final String fontFamily;
-  final List<String> sectionOrder;
-  final Map<String, dynamic> data;
-
-  @override
-  Widget build(BuildContext context) {
-    final bodyStyle = _font(
-      fontFamily,
-      TextStyle(
-        fontSize: template.layout == CvTemplateLayout.compact ? 10.8 : 11.6,
-        height: 1.45,
-        color: template.textColor,
-      ),
-    );
-    final headingStyle = _font(
-      fontFamily,
-      TextStyle(
-        fontSize: template.layout == CvTemplateLayout.executive ? 31 : 28,
-        fontWeight: FontWeight.w700,
-        height: 1.08,
-        color: template.textColor,
-      ),
-    );
-    final sectionTitleStyle = _font(
-      fontFamily,
-      TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700, letterSpacing: 0.9, color: accentColor),
-    );
+    final brightness = Theme.of(context).brightness;
 
     return Container(
-      padding: EdgeInsets.all(template.layout == CvTemplateLayout.compact ? 24 : 30),
+      height: 680,
+      padding: const EdgeInsets.all(22),
       decoration: BoxDecoration(
-        color: template.background,
-        borderRadius: BorderRadius.circular(18),
-        boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.08), blurRadius: 22, offset: const Offset(0, 16))],
+        borderRadius: BorderRadius.circular(22),
+        color: AppColors.surfaceMuted(brightness),
+        border: Border.all(color: AppColors.stroke(brightness)),
       ),
-      child: template.layout == CvTemplateLayout.techSidebar
-          ? _buildTechLayout(headingStyle, sectionTitleStyle, bodyStyle)
-          : _buildStandardLayout(headingStyle, sectionTitleStyle, bodyStyle),
-    );
-  }
-
-  Widget _buildStandardLayout(TextStyle headingStyle, TextStyle sectionTitleStyle, TextStyle bodyStyle) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        _DocumentHeader(
-          data: data,
-          headingStyle: headingStyle,
-          bodyStyle: bodyStyle,
-          accentColor: accentColor,
-          centered: template.layout == CvTemplateLayout.executive,
-        ),
-        const SizedBox(height: 22),
-        ..._orderedSections(sectionTitleStyle, bodyStyle),
-      ],
-    );
-  }
-
-  Widget _buildTechLayout(TextStyle headingStyle, TextStyle sectionTitleStyle, TextStyle bodyStyle) {
-    return Row(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        SizedBox(
-          width: 150,
-          child: Container(
-            padding: const EdgeInsets.all(18),
-            decoration: BoxDecoration(color: accentColor.withValues(alpha: 0.14), borderRadius: BorderRadius.circular(16)),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text('CONTACT', style: sectionTitleStyle),
-                const SizedBox(height: 12),
-                for (final item in (data['contact'] as List<dynamic>).take(5)) ...[
-                  Text(item.toString(), style: bodyStyle.copyWith(fontSize: 10.4)),
-                  const SizedBox(height: 8),
-                ],
-                const SizedBox(height: 8),
-                Text('SKILLS', style: sectionTitleStyle),
-                const SizedBox(height: 12),
-                for (final item in (data['skills'] as List<dynamic>).take(6)) ...[
-                  Text('- ${item.toString()}', style: bodyStyle.copyWith(fontSize: 10.4)),
-                  const SizedBox(height: 6),
-                ],
-              ],
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const SizedBox(
+                width: 22,
+                height: 22,
+                child: CircularProgressIndicator(strokeWidth: 2.5),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Text(
+                  label,
+                  style: Theme.of(context).textTheme.titleMedium,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 22),
+          Text(
+            stageLabel,
+            style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                  color: AppColors.subtext(brightness),
+                ),
+          ),
+          const SizedBox(height: 12),
+          ClipRRect(
+            borderRadius: BorderRadius.circular(999),
+            child: LinearProgressIndicator(
+              value: progress,
+              minHeight: 10,
             ),
           ),
+          const SizedBox(height: 22),
+          for (final width in [0.92, 0.7, 1.0, 0.86, 0.76])
+            Padding(
+              padding: const EdgeInsets.only(bottom: 12),
+              child: FractionallySizedBox(
+                alignment: Alignment.centerLeft,
+                widthFactor: width,
+                child: Container(
+                  height: 22,
+                  decoration: BoxDecoration(
+                    color: AppColors.surface(brightness),
+                    borderRadius: BorderRadius.circular(999),
+                  ),
+                ),
+              ),
+            ),
+          const Spacer(),
+          Container(
+            height: 420,
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(18),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _UploadEmptyState extends StatelessWidget {
+  const _UploadEmptyState({
+    required this.onUpload,
+    required this.onBuildInstead,
+  });
+
+  final VoidCallback onUpload;
+  final VoidCallback onBuildInstead;
+
+  @override
+  Widget build(BuildContext context) {
+    final brightness = Theme.of(context).brightness;
+
+    return Container(
+      height: 680,
+      padding: const EdgeInsets.all(28),
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(22),
+        border: Border.all(
+          color: AppColors.stroke(brightness),
+          width: 1.3,
         ),
-        const SizedBox(width: 18),
-        Expanded(
+        gradient: LinearGradient(
+          colors: [
+            AppColors.surfaceMuted(brightness),
+            AppColors.surface(brightness),
+          ],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+      ),
+      child: Center(
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 520),
           child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
             children: [
-              _DocumentHeader(data: data, headingStyle: headingStyle, bodyStyle: bodyStyle, accentColor: accentColor),
-              const SizedBox(height: 22),
-              ..._orderedSections(sectionTitleStyle, bodyStyle, exclude: const ['skills']),
+              Container(
+                width: 92,
+                height: 92,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: AppColors.midnight.withValues(alpha: 0.12),
+                ),
+                child: const Icon(
+                  Icons.upload_file_rounded,
+                  size: 42,
+                  color: AppColors.midnight,
+                ),
+              ),
+              const SizedBox(height: 18),
+              Text(
+                'Upload your CV to get started',
+                textAlign: TextAlign.center,
+                style: Theme.of(context).textTheme.displaySmall,
+              ),
+              const SizedBox(height: 10),
+              Text(
+                'The live preview will render your real uploaded PDF here. If you are still building your CV inside SmartJob, you can jump into the editor first.',
+                textAlign: TextAlign.center,
+                style: Theme.of(context).textTheme.bodyLarge?.copyWith(
+                      color: AppColors.subtext(brightness),
+                    ),
+              ),
+              const SizedBox(height: 10),
+              Text(
+                'Supports .pdf, .doc, and .docx uploads.',
+                textAlign: TextAlign.center,
+                style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                      color: AppColors.subtext(brightness),
+                    ),
+              ),
+              const SizedBox(height: 20),
+              Wrap(
+                alignment: WrapAlignment.center,
+                spacing: 12,
+                runSpacing: 12,
+                children: [
+                  ElevatedButton.icon(
+                    onPressed: onUpload,
+                    icon: const Icon(Icons.file_upload_outlined),
+                    label: const Text('Upload PDF or Word CV'),
+                  ),
+                  OutlinedButton.icon(
+                    onPressed: onBuildInstead,
+                    icon: const Icon(Icons.edit_note_outlined),
+                    label: const Text('Edit CV content'),
+                  ),
+                ],
+              ),
             ],
           ),
         ),
-      ],
+      ),
     );
-  }
-
-  List<Widget> _orderedSections(TextStyle sectionTitleStyle, TextStyle bodyStyle, {List<String> exclude = const []}) {
-    final widgets = <Widget>[];
-    for (final section in sectionOrder.where((item) => !exclude.contains(item))) {
-      widgets.add(_DocumentSection(title: _sectionLabel(section), items: _itemsFor(section), titleStyle: sectionTitleStyle, bodyStyle: bodyStyle, accentColor: accentColor));
-      widgets.add(const SizedBox(height: 16));
-    }
-    if (widgets.isNotEmpty) {
-      widgets.removeLast();
-    }
-    return widgets;
-  }
-
-  List<String> _itemsFor(String section) {
-    return switch (section) {
-      'summary' => [data['summary'].toString()],
-      'skills' => (data['skills'] as List<dynamic>).map((item) => item.toString()).toList(),
-      'experience' => (data['experience'] as List<dynamic>).map((item) => item.toString()).toList(),
-      'education' => (data['education'] as List<dynamic>).map((item) => item.toString()).toList(),
-      'projects' => (data['projects'] as List<dynamic>).map((item) => item.toString()).toList(),
-      _ => const [],
-    };
-  }
-
-  TextStyle _font(String family, TextStyle style) {
-    return switch (family) {
-      'Poppins' => GoogleFonts.poppins(textStyle: style),
-      'Roboto' => GoogleFonts.roboto(textStyle: style),
-      'Playfair Display' => GoogleFonts.playfairDisplay(textStyle: style),
-      _ => GoogleFonts.inter(textStyle: style),
-    };
   }
 }
 
-class _DocumentHeader extends StatelessWidget {
-  const _DocumentHeader({required this.data, required this.headingStyle, required this.bodyStyle, required this.accentColor, this.centered = false});
+class _NonPdfPreviewState extends StatelessWidget {
+  const _NonPdfPreviewState({
+    required this.fileName,
+    required this.mimeType,
+    required this.summary,
+    required this.onUploadPdf,
+  });
 
-  final Map<String, dynamic> data;
-  final TextStyle headingStyle;
-  final TextStyle bodyStyle;
-  final Color accentColor;
-  final bool centered;
+  final String fileName;
+  final String mimeType;
+  final String summary;
+  final VoidCallback onUploadPdf;
 
   @override
   Widget build(BuildContext context) {
-    return Column(
-      crossAxisAlignment: centered ? CrossAxisAlignment.center : CrossAxisAlignment.start,
-      children: [
-        Text(data['name'].toString(), textAlign: centered ? TextAlign.center : TextAlign.left, style: headingStyle),
-        const SizedBox(height: 6),
-        Text(data['title'].toString(), textAlign: centered ? TextAlign.center : TextAlign.left, style: bodyStyle.copyWith(fontWeight: FontWeight.w600, color: accentColor)),
-        const SizedBox(height: 10),
-        Wrap(
-          alignment: centered ? WrapAlignment.center : WrapAlignment.start,
-          spacing: 8,
-          runSpacing: 8,
-          children: [
-            for (final item in (data['contact'] as List<dynamic>).take(6))
+    final brightness = Theme.of(context).brightness;
+
+    return Container(
+      height: 680,
+      padding: const EdgeInsets.all(26),
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(22),
+        color: AppColors.surfaceMuted(brightness),
+        border: Border.all(color: AppColors.stroke(brightness)),
+      ),
+      child: Center(
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 560),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
               Container(
-                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
-                decoration: BoxDecoration(color: accentColor.withValues(alpha: 0.12), borderRadius: BorderRadius.circular(999)),
-                child: Text(item.toString(), style: bodyStyle.copyWith(fontSize: 10.3)),
+                width: 88,
+                height: 88,
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(24),
+                  color: AppColors.sand.withValues(alpha: 0.16),
+                ),
+                child: const Icon(
+                  Icons.description_outlined,
+                  size: 42,
+                  color: AppColors.sand,
+                ),
               ),
-          ],
+              const SizedBox(height: 16),
+              Text(
+                fileName,
+                textAlign: TextAlign.center,
+                style: Theme.of(context).textTheme.headlineMedium,
+              ),
+              const SizedBox(height: 8),
+              Text(
+                'This CV is connected, but SmartJob can only render inline preview for uploaded PDF files right now.',
+                textAlign: TextAlign.center,
+                style: Theme.of(context).textTheme.bodyLarge?.copyWith(
+                      color: AppColors.subtext(brightness),
+                    ),
+              ),
+              const SizedBox(height: 14),
+              _InfoBadge(label: 'Type', value: mimeType),
+              const SizedBox(height: 18),
+              Text(
+                summary,
+                textAlign: TextAlign.center,
+                style: Theme.of(context).textTheme.bodyMedium,
+              ),
+              const SizedBox(height: 18),
+              OutlinedButton.icon(
+                onPressed: onUploadPdf,
+                icon: const Icon(Icons.picture_as_pdf_outlined),
+                label: const Text('Upload PDF for live preview'),
+              ),
+            ],
+          ),
         ),
-      ],
+      ),
     );
   }
 }
 
-class _DocumentSection extends StatelessWidget {
-  const _DocumentSection({required this.title, required this.items, required this.titleStyle, required this.bodyStyle, required this.accentColor});
+class _SuggestedKeywordsCard extends StatelessWidget {
+  const _SuggestedKeywordsCard({
+    required this.keywords,
+    required this.onAdd,
+  });
+
+  final List<String> keywords;
+  final ValueChanged<String> onAdd;
+
+  @override
+  Widget build(BuildContext context) {
+    final brightness = Theme.of(context).brightness;
+
+    return SmartJobPanel(
+      radius: 24,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const SmartJobSectionHeader(
+            title: 'Suggested Keywords',
+            subtitle:
+                'Tap a keyword to add it into Skills and jump straight into the editor.',
+          ),
+          const SizedBox(height: 18),
+          if (keywords.isEmpty)
+            Text(
+              'No missing keywords detected right now.',
+              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                    color: AppColors.subtext(brightness),
+                  ),
+            )
+          else
+            Wrap(
+              spacing: 12,
+              runSpacing: 12,
+              children: [
+                for (final keyword in keywords)
+                  _KeywordActionChip(
+                    label: keyword,
+                    onTap: () => onAdd(keyword),
+                  ),
+              ],
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ImproveNextCard extends StatelessWidget {
+  const _ImproveNextCard({
+    required this.tips,
+    required this.onTapTip,
+  });
+
+  final List<String> tips;
+  final ValueChanged<String> onTapTip;
+
+  @override
+  Widget build(BuildContext context) {
+    final effectiveTips = tips.isEmpty
+        ? const [
+            'Add stronger action verbs to your experience bullets.',
+            'Include missing technical tools in your skills section.',
+            'Quantify one achievement with delivery, growth, or impact.',
+          ]
+        : tips;
+
+    return SmartJobPanel(
+      radius: 24,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const SmartJobSectionHeader(
+            title: 'Improve Next',
+            subtitle:
+                'Focused edits that will most likely improve readability, keyword fit, and recruiter confidence.',
+          ),
+          const SizedBox(height: 16),
+          for (var i = 0; i < effectiveTips.length; i++) ...[
+            _ImprovementTile(
+              index: i + 1,
+              tip: effectiveTips[i],
+              icon: _tipIconFor(effectiveTips[i]),
+              onTap: () => onTapTip(effectiveTips[i]),
+            ),
+            if (i != effectiveTips.length - 1) const SizedBox(height: 12),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class _SheetActionTile extends StatelessWidget {
+  const _SheetActionTile({
+    required this.icon,
+    required this.title,
+    required this.subtitle,
+    required this.onTap,
+  });
+
+  final IconData icon;
+  final String title;
+  final String subtitle;
+  final VoidCallback? onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final brightness = Theme.of(context).brightness;
+
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 10),
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          onTap: onTap,
+          borderRadius: BorderRadius.circular(20),
+          child: Ink(
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(20),
+              color: AppColors.surfaceMuted(brightness),
+              border: Border.all(color: AppColors.stroke(brightness)),
+            ),
+            child: Row(
+              children: [
+                Container(
+                  width: 42,
+                  height: 42,
+                  decoration: BoxDecoration(
+                    color: AppColors.midnight.withValues(alpha: 0.14),
+                    borderRadius: BorderRadius.circular(14),
+                  ),
+                  child: Icon(icon, color: AppColors.midnight),
+                ),
+                const SizedBox(width: 14),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        title,
+                        style:
+                            Theme.of(context).textTheme.titleMedium?.copyWith(
+                                  fontWeight: FontWeight.w700,
+                                ),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        subtitle,
+                        style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                              color: AppColors.subtext(brightness),
+                            ),
+                      ),
+                    ],
+                  ),
+                ),
+                Icon(
+                  Icons.chevron_right,
+                  color: AppColors.subtext(brightness),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _BreakdownRow extends StatelessWidget {
+  const _BreakdownRow({
+    required this.label,
+    required this.score,
+  });
+
+  final String label;
+  final int score;
+
+  @override
+  Widget build(BuildContext context) {
+    final brightness = Theme.of(context).brightness;
+    final color = _scoreColor(score);
+
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 14),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  label,
+                  style: Theme.of(context).textTheme.titleMedium,
+                ),
+              ),
+              Text(
+                '$score',
+                style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                      color: color,
+                      fontWeight: FontWeight.w700,
+                    ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          ClipRRect(
+            borderRadius: BorderRadius.circular(999),
+            child: LinearProgressIndicator(
+              value: score / 100,
+              minHeight: 10,
+              color: color,
+              backgroundColor: AppColors.surfaceMuted(brightness),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _InfoTile extends StatelessWidget {
+  const _InfoTile({
+    required this.label,
+    required this.value,
+  });
+
+  final String label;
+  final String value;
+
+  @override
+  Widget build(BuildContext context) {
+    final brightness = Theme.of(context).brightness;
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: AppColors.surfaceMuted(brightness),
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: AppColors.stroke(brightness)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            label,
+            style: Theme.of(context).textTheme.labelLarge?.copyWith(
+                  color: AppColors.subtext(brightness),
+                ),
+          ),
+          const SizedBox(height: 6),
+          Text(
+            value,
+            style: Theme.of(context).textTheme.titleMedium,
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _StatusPill extends StatelessWidget {
+  const _StatusPill({
+    required this.icon,
+    required this.label,
+    this.highlighted = false,
+    this.accent,
+  });
+
+  final IconData icon;
+  final String label;
+  final bool highlighted;
+  final Color? accent;
+
+  @override
+  Widget build(BuildContext context) {
+    final brightness = Theme.of(context).brightness;
+    final color = accent ?? AppColors.midnight;
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(999),
+        color: highlighted
+            ? color.withValues(alpha: 0.12)
+            : AppColors.surfaceMuted(brightness),
+        border: Border.all(
+          color: highlighted
+              ? color.withValues(alpha: 0.32)
+              : AppColors.stroke(brightness),
+        ),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(
+            icon,
+            size: 16,
+            color: highlighted ? color : AppColors.subtext(brightness),
+          ),
+          const SizedBox(width: 8),
+          Text(
+            label,
+            style: Theme.of(context).textTheme.labelLarge?.copyWith(
+                  color: highlighted ? color : null,
+                  fontWeight: FontWeight.w700,
+                ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _KeywordActionChip extends StatelessWidget {
+  const _KeywordActionChip({
+    required this.label,
+    required this.onTap,
+  });
+
+  final String label;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final brightness = Theme.of(context).brightness;
+
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(999),
+        child: Ink(
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(999),
+            color: AppColors.surfaceMuted(brightness),
+            border: Border.all(color: AppColors.stroke(brightness)),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                label,
+                style: Theme.of(context).textTheme.labelLarge?.copyWith(
+                      fontWeight: FontWeight.w700,
+                    ),
+              ),
+              const SizedBox(width: 10),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                decoration: BoxDecoration(
+                  color: AppColors.midnight.withValues(alpha: 0.1),
+                  borderRadius: BorderRadius.circular(999),
+                ),
+                child: const Text(
+                  '+ Add',
+                  style: TextStyle(
+                    color: AppColors.midnight,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _ImprovementTile extends StatelessWidget {
+  const _ImprovementTile({
+    required this.index,
+    required this.tip,
+    required this.icon,
+    required this.onTap,
+  });
+
+  final int index;
+  final String tip;
+  final IconData icon;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final brightness = Theme.of(context).brightness;
+
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(20),
+        child: Ink(
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(20),
+            color: AppColors.surfaceMuted(brightness),
+            border: Border.all(color: AppColors.stroke(brightness)),
+          ),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Container(
+                width: 40,
+                height: 40,
+                alignment: Alignment.center,
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(14),
+                  color: AppColors.midnight.withValues(alpha: 0.12),
+                ),
+                child: Text(
+                  '$index',
+                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                        color: AppColors.midnight,
+                        fontWeight: FontWeight.w700,
+                      ),
+                ),
+              ),
+              const SizedBox(width: 14),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Icon(icon, size: 18),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            tip,
+                            style:
+                                Theme.of(context).textTheme.titleMedium?.copyWith(
+                                      fontWeight: FontWeight.w700,
+                                    ),
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 6),
+                    Text(
+                      'Open the editor to apply this improvement directly in your CV content.',
+                      style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                            color: AppColors.subtext(brightness),
+                          ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 10),
+              Icon(
+                Icons.chevron_right,
+                color: AppColors.subtext(brightness),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _InfoBadge extends StatelessWidget {
+  const _InfoBadge({
+    required this.label,
+    required this.value,
+  });
+
+  final String label;
+  final String value;
+
+  @override
+  Widget build(BuildContext context) {
+    final brightness = Theme.of(context).brightness;
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(999),
+        color: AppColors.surface(brightness),
+        border: Border.all(color: AppColors.stroke(brightness)),
+      ),
+      child: Text(
+        '$label: $value',
+        style: Theme.of(context).textTheme.labelLarge,
+      ),
+    );
+  }
+}
+
+class _PdfPreviewSkeleton extends StatelessWidget {
+  const _PdfPreviewSkeleton();
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      color: Colors.white,
+      padding: const EdgeInsets.all(28),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: const [
+          SmartJobSkeletonBlock(height: 26, width: 220, radius: 12),
+          SizedBox(height: 16),
+          SmartJobSkeletonBlock(height: 14, width: 360, radius: 999),
+          SizedBox(height: 10),
+          SmartJobSkeletonBlock(height: 14, width: 280, radius: 999),
+          SizedBox(height: 28),
+          Expanded(
+            child: SmartJobSkeletonBlock(
+              width: double.infinity,
+              radius: 18,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _HealthStatus {
+  const _HealthStatus(this.label, this.color);
+
+  final String label;
+  final Color color;
+}
+
+class _ScoreCardData {
+  const _ScoreCardData({
+    required this.title,
+    required this.score,
+    required this.description,
+    this.onTap,
+  });
+
+  final String title;
+  final int score;
+  final String description;
+  final VoidCallback? onTap;
+}
+
+class CvExportDocument {
+  const CvExportDocument({
+    required this.fullName,
+    required this.roleTitle,
+    required this.contactLines,
+    required this.sections,
+  });
+
+  final String fullName;
+  final String roleTitle;
+  final List<String> contactLines;
+  final List<CvExportSection> sections;
+}
+
+class CvExportSection {
+  const CvExportSection({
+    required this.title,
+    required this.items,
+  });
 
   final String title;
   final List<String> items;
-  final TextStyle titleStyle;
-  final TextStyle bodyStyle;
-  final Color accentColor;
+}
 
-  @override
-  Widget build(BuildContext context) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Container(
-          width: double.infinity,
-          padding: const EdgeInsets.only(bottom: 8),
-          decoration: BoxDecoration(border: Border(bottom: BorderSide(color: accentColor.withValues(alpha: 0.32)))),
-          child: Text(title.toUpperCase(), style: titleStyle),
-        ),
-        const SizedBox(height: 10),
-        for (final item in items) ...[
-          Text(item, style: bodyStyle),
-          const SizedBox(height: 8),
-        ],
-      ],
+Uint8List buildCvPdfBytes(CvExportDocument document) {
+  final lines = <_PdfLineData>[];
+
+  lines.add(
+    _PdfLineData(
+      text: document.fullName,
+      fontSize: 22,
+      bold: true,
+    ),
+  );
+
+  if (document.roleTitle.trim().isNotEmpty) {
+    lines.add(
+      _PdfLineData(
+        text: document.roleTitle,
+        fontSize: 13,
+      ),
     );
   }
+
+  if (document.contactLines.isNotEmpty) {
+    final contactLine = document.contactLines.join(' | ');
+    for (final wrapped in _wrapText(contactLine, 86)) {
+      lines.add(
+        _PdfLineData(
+          text: wrapped,
+          fontSize: 10,
+          topSpacing: 2,
+        ),
+      );
+    }
+  }
+
+  for (final section in document.sections) {
+    lines.add(
+      _PdfLineData(
+        text: section.title.toUpperCase(),
+        fontSize: 13,
+        bold: true,
+        topSpacing: 18,
+      ),
+    );
+    for (final item in section.items) {
+      final wrapped = _wrapText(item, 82);
+      for (var i = 0; i < wrapped.length; i++) {
+        lines.add(
+          _PdfLineData(
+            text: i == 0 ? '- ${wrapped[i]}' : '  ${wrapped[i]}',
+            fontSize: 11,
+            topSpacing: i == 0 ? 7 : 2,
+          ),
+        );
+      }
+    }
+  }
+
+  final pages = <List<_LaidOutPdfLine>>[];
+  var currentPage = <_LaidOutPdfLine>[];
+  const pageHeight = 792.0;
+  const top = 744.0;
+  const bottom = 54.0;
+  var y = top;
+
+  for (final line in lines) {
+    final lineHeight = line.fontSize + 6 + line.topSpacing;
+    if (y - lineHeight < bottom && currentPage.isNotEmpty) {
+      pages.add(currentPage);
+      currentPage = <_LaidOutPdfLine>[];
+      y = top;
+    }
+
+    y -= line.topSpacing;
+    currentPage.add(_LaidOutPdfLine(line, y));
+    y -= line.fontSize + 6;
+  }
+
+  if (currentPage.isNotEmpty) {
+    pages.add(currentPage);
+  }
+
+  final objects = <String>[];
+  objects.add('<< /Type /Catalog /Pages 2 0 R >>');
+
+  final pageCount = pages.length;
+  final firstPageObject = 5;
+  final kids = [
+    for (var i = 0; i < pageCount; i++) '${firstPageObject + (i * 2)} 0 R',
+  ].join(' ');
+  objects.add('<< /Type /Pages /Kids [$kids] /Count $pageCount >>');
+  objects.add('<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>');
+  objects.add(
+    '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold >>',
+  );
+
+  for (var i = 0; i < pages.length; i++) {
+    final pageObjectNumber = firstPageObject + (i * 2);
+    final contentObjectNumber = pageObjectNumber + 1;
+    objects.add(
+      '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 $pageHeight] /Resources << /Font << /F1 3 0 R /F2 4 0 R >> >> /Contents $contentObjectNumber 0 R >>',
+    );
+
+    final content = StringBuffer();
+    for (final line in pages[i]) {
+      final font = line.data.bold ? 'F2' : 'F1';
+      final safeText = _pdfEscape(line.data.text);
+      content.writeln('BT');
+      content.writeln('/$font ${line.data.fontSize} Tf');
+      content.writeln('54 ${line.y.toStringAsFixed(2)} Td');
+      content.writeln('($safeText) Tj');
+      content.writeln('ET');
+    }
+
+    final stream = content.toString();
+    final streamBytes = latin1.encode(stream);
+    objects.add(
+      '<< /Length ${streamBytes.length} >>\nstream\n$stream\nendstream',
+    );
+  }
+
+  final buffer = StringBuffer();
+  final offsets = <int>[0];
+  buffer.write('%PDF-1.4\n');
+
+  for (var i = 0; i < objects.length; i++) {
+    offsets.add(latin1.encode(buffer.toString()).length);
+    buffer.write('${i + 1} 0 obj\n');
+    buffer.write(objects[i]);
+    buffer.write('\nendobj\n');
+  }
+
+  final xrefOffset = latin1.encode(buffer.toString()).length;
+  buffer.write('xref\n');
+  buffer.write('0 ${objects.length + 1}\n');
+  buffer.write('0000000000 65535 f \n');
+  for (var i = 1; i < offsets.length; i++) {
+    buffer.writeln('${offsets[i].toString().padLeft(10, '0')} 00000 n ');
+  }
+  buffer.write('trailer\n');
+  buffer.write(
+    '<< /Size ${objects.length + 1} /Root 1 0 R >>\n',
+  );
+  buffer.write('startxref\n');
+  buffer.write('$xrefOffset\n');
+  buffer.write('%%EOF');
+
+  return Uint8List.fromList(latin1.encode(buffer.toString()));
+}
+
+Uint8List buildCvWordBytes(CvExportDocument document) {
+  final buffer = StringBuffer();
+  buffer.writeln(r'{\rtf1\ansi\deff0');
+  buffer.writeln(r'{\fonttbl{\f0 Arial;}}');
+  buffer.writeln(r'\paperw12240\paperh15840\margl1080\margr1080\margt1080\margb1080');
+  buffer.writeln('\\f0\\fs42\\b ${_rtfEscape(document.fullName)}\\b0\\par');
+
+  if (document.roleTitle.trim().isNotEmpty) {
+    buffer.writeln('\\fs24 ${_rtfEscape(document.roleTitle)}\\par');
+  }
+
+  if (document.contactLines.isNotEmpty) {
+    buffer.writeln(
+      '\\fs20 ${_rtfEscape(document.contactLines.join(' | '))}\\par',
+    );
+  }
+
+  for (final section in document.sections) {
+    buffer.writeln('\\par\\b\\fs24 ${_rtfEscape(section.title)}\\b0\\par');
+    for (final item in section.items) {
+      buffer.writeln('\\fs22 - ${_rtfEscape(item)}\\par');
+    }
+  }
+
+  buffer.write('}');
+  return Uint8List.fromList(latin1.encode(buffer.toString()));
+}
+
+class _PdfLineData {
+  const _PdfLineData({
+    required this.text,
+    required this.fontSize,
+    this.bold = false,
+    this.topSpacing = 0,
+  });
+
+  final String text;
+  final double fontSize;
+  final bool bold;
+  final double topSpacing;
+}
+
+class _LaidOutPdfLine {
+  const _LaidOutPdfLine(this.data, this.y);
+
+  final _PdfLineData data;
+  final double y;
+}
+
+List<String> _wrapText(String value, int maxChars) {
+  final text = value.trim().replaceAll(RegExp(r'\s+'), ' ');
+  if (text.isEmpty) {
+    return const [];
+  }
+
+  final words = text.split(' ');
+  final lines = <String>[];
+  var current = '';
+
+  for (final word in words) {
+    final candidate = current.isEmpty ? word : '$current $word';
+    if (candidate.length <= maxChars) {
+      current = candidate;
+      continue;
+    }
+
+    if (current.isNotEmpty) {
+      lines.add(current);
+      current = word;
+      continue;
+    }
+
+    lines.add(word);
+  }
+
+  if (current.isNotEmpty) {
+    lines.add(current);
+  }
+
+  return lines;
+}
+
+String _pdfEscape(String value) {
+  return _asciiOnly(value)
+      .replaceAll(r'\', r'\\')
+      .replaceAll('(', r'\(')
+      .replaceAll(')', r'\)');
+}
+
+String _rtfEscape(String value) {
+  return _asciiOnly(value)
+      .replaceAll(r'\', r'\\')
+      .replaceAll('{', r'\{')
+      .replaceAll('}', r'\}');
+}
+
+String _asciiOnly(String value) {
+  final buffer = StringBuffer();
+  for (final codeUnit in value.codeUnits) {
+    if (codeUnit >= 32 && codeUnit <= 126) {
+      buffer.writeCharCode(codeUnit);
+    } else if (codeUnit == 10 || codeUnit == 13) {
+      buffer.write(' ');
+    } else {
+      buffer.write('?');
+    }
+  }
+  return buffer.toString();
 }
 
 String _sectionLabel(String section) {
@@ -903,6 +2482,81 @@ String _sectionLabel(String section) {
     'experience' => 'Experience',
     'education' => 'Education',
     'projects' => 'Projects',
-    _ => section,
+    _ => section.replaceAll('_', ' '),
   };
 }
+
+String _initialsFor(String fullName) {
+  final parts = fullName
+      .trim()
+      .split(RegExp(r'\s+'))
+      .where((part) => part.isNotEmpty)
+      .take(2)
+      .toList();
+
+  if (parts.isEmpty) {
+    return 'SJ';
+  }
+
+  return parts
+      .map((part) => part.substring(0, 1).toUpperCase())
+      .join();
+}
+
+String _lastEditedAgo(String isoString) {
+  final editedAt = DateTime.tryParse(isoString);
+  if (editedAt == null) {
+    return 'Last edited just now';
+  }
+
+  final difference = DateTime.now().toUtc().difference(editedAt.toUtc());
+  if (difference.inSeconds < 60) {
+    return 'Last edited ${difference.inSeconds.clamp(1, 59)}s ago';
+  }
+  if (difference.inMinutes < 60) {
+    return 'Last edited ${difference.inMinutes}m ago';
+  }
+  if (difference.inHours < 24) {
+    return 'Last edited ${difference.inHours}h ago';
+  }
+  return 'Last edited ${difference.inDays}d ago';
+}
+
+Color _scoreColor(int score) {
+  if (score >= 70) {
+    return AppColors.success;
+  }
+  if (score >= 41) {
+    return AppColors.warning;
+  }
+  return AppColors.danger;
+}
+
+IconData _tipIconFor(String tip) {
+  final lower = tip.toLowerCase();
+  if (lower.contains('tool') || lower.contains('skill')) {
+    return Icons.build_outlined;
+  }
+  if (lower.contains('achievement') || lower.contains('impact')) {
+    return Icons.rocket_launch_outlined;
+  }
+  if (lower.contains('verb') || lower.contains('summary')) {
+    return Icons.edit_outlined;
+  }
+  return Icons.checklist_rtl_outlined;
+}
+
+String _editorSectionForTip(String tip) {
+  final lower = tip.toLowerCase();
+  if (lower.contains('project')) {
+    return 'projects';
+  }
+  if (lower.contains('education') || lower.contains('coursework')) {
+    return 'education';
+  }
+  if (lower.contains('tool') || lower.contains('skill')) {
+    return 'skills';
+  }
+  return 'experience';
+}
+

@@ -1,4 +1,4 @@
-name: smart_job
+﻿name: smart_job
 description: "A new Flutter project."
 # The following line prevents the package from being accidentally published to
 # pub.dev using `flutter pub publish`. This is preferred for private packages.
@@ -41,6 +41,7 @@ dependencies:
   lucide_icons: ^0.257.0
   shared_preferences: ^2.5.3
   file_picker: ^10.3.10
+  syncfusion_flutter_pdfviewer: ^32.2.9
   hive: ^2.2.3
   hive_flutter: ^1.1.0
   supabase_flutter: ^2.12.2
@@ -97,3 +98,6 @@ flutter:
   #
   # For details regarding fonts from package dependencies,
   # see https://flutter.dev/to/font-from-package
+
+
+

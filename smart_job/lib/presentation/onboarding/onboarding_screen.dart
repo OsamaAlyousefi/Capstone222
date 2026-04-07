@@ -1,3 +1,4 @@
+﻿import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:file_picker/file_picker.dart';
@@ -342,13 +343,13 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
     var remoteStoragePath = '';
 
     try {
-      if (remoteSync != null) {
-        final bytes = await _readSelectedFileBytes(selectedFile);
-        if (bytes == null || bytes.isEmpty) {
-          _showMessage('SmartJob could not read that file for upload. Please choose another CV.');
-          return;
-        }
+      final bytes = await _readSelectedFileBytes(selectedFile);
+      if (bytes == null || bytes.isEmpty) {
+        _showMessage('SmartJob could not read that file for upload. Please choose another CV.');
+        return;
+      }
 
+      if (remoteSync != null) {
         final email = ref.read(smartJobControllerProvider).profile.email;
         remoteStoragePath = await remoteSync.uploadCv(
           email: email,
@@ -366,6 +367,8 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
             targetRoles: _selectedRoles,
             preferredLocations: _selectedLocations,
             remoteStoragePath: remoteStoragePath,
+            uploadedCvBase64: _isPdfFile(selectedFile.name) ? base64Encode(bytes) : '',
+            uploadedCvMimeType: _mimeTypeForFileName(selectedFile.name),
           );
       context.go(AppRoute.main);
     } catch (_) {
@@ -397,6 +400,24 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
     }
     final streamedBytes = builder.takeBytes();
     return streamedBytes.isEmpty ? null : streamedBytes;
+  }
+
+  bool _isPdfFile(String fileName) {
+    return fileName.toLowerCase().endsWith('.pdf');
+  }
+
+  String _mimeTypeForFileName(String fileName) {
+    final lower = fileName.toLowerCase();
+    if (lower.endsWith('.pdf')) {
+      return 'application/pdf';
+    }
+    if (lower.endsWith('.doc')) {
+      return 'application/msword';
+    }
+    if (lower.endsWith('.docx')) {
+      return 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+    }
+    return 'application/octet-stream';
   }
 
   void _finishBuilderFlow() {
@@ -480,5 +501,6 @@ class _ModeCard extends StatelessWidget {
     );
   }
 }
+
 
 

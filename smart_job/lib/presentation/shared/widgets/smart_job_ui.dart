@@ -83,12 +83,14 @@ class SmartJobScrollPage extends StatelessWidget {
     this.maxWidth = 1160,
     this.padding,
     this.scrollViewKey,
+    this.controller,
   });
 
   final Widget child;
   final double maxWidth;
   final EdgeInsetsGeometry? padding;
   final Key? scrollViewKey;
+  final ScrollController? controller;
 
   @override
   Widget build(BuildContext context) {
@@ -103,6 +105,7 @@ class SmartJobScrollPage extends StatelessWidget {
 
           return SingleChildScrollView(
             key: scrollViewKey,
+            controller: controller,
             padding: EdgeInsets.zero,
             child: Align(
               alignment: Alignment.topCenter,

@@ -24,6 +24,8 @@ class CvInsight {
     required this.selectedTemplate,
     required this.parsedSummary,
     required this.remoteStoragePath,
+    required this.uploadedCvBase64,
+    required this.uploadedCvMimeType,
     required this.accentColorHex,
     required this.fontFamily,
     required this.sectionOrder,
@@ -42,10 +44,14 @@ class CvInsight {
   final String selectedTemplate;
   final String parsedSummary;
   final String remoteStoragePath;
+  final String uploadedCvBase64;
+  final String uploadedCvMimeType;
   final String accentColorHex;
   final String fontFamily;
   final List<String> sectionOrder;
   final String lastEditedAtIso;
+
+  bool get hasUploadedPreview => uploadedCvBase64.isNotEmpty;
 
   CvInsight copyWith({
     String? fileName,
@@ -60,6 +66,8 @@ class CvInsight {
     String? selectedTemplate,
     String? parsedSummary,
     String? remoteStoragePath,
+    String? uploadedCvBase64,
+    String? uploadedCvMimeType,
     String? accentColorHex,
     String? fontFamily,
     List<String>? sectionOrder,
@@ -78,6 +86,8 @@ class CvInsight {
       selectedTemplate: selectedTemplate ?? this.selectedTemplate,
       parsedSummary: parsedSummary ?? this.parsedSummary,
       remoteStoragePath: remoteStoragePath ?? this.remoteStoragePath,
+      uploadedCvBase64: uploadedCvBase64 ?? this.uploadedCvBase64,
+      uploadedCvMimeType: uploadedCvMimeType ?? this.uploadedCvMimeType,
       accentColorHex: accentColorHex ?? this.accentColorHex,
       fontFamily: fontFamily ?? this.fontFamily,
       sectionOrder: sectionOrder ?? this.sectionOrder,

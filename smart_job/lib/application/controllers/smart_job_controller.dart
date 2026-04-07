@@ -1,4 +1,4 @@
-import 'dart:math' as math;
+﻿import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -321,6 +321,8 @@ class SmartJobController extends Notifier<SmartJobState> {
     required List<String> targetRoles,
     required List<String> preferredLocations,
     String remoteStoragePath = '',
+    String uploadedCvBase64 = '',
+    String uploadedCvMimeType = '',
   }) {
     _updateProfile(
       (profile) => profile.copyWith(
@@ -333,6 +335,8 @@ class SmartJobController extends Notifier<SmartJobState> {
         cvInsight: profile.cvInsight.copyWith(
           fileName: fileName,
           remoteStoragePath: remoteStoragePath,
+          uploadedCvBase64: uploadedCvBase64,
+          uploadedCvMimeType: uploadedCvMimeType,
           parsedSummary: remoteStoragePath.isNotEmpty
               ? '$fileName is uploaded to your SmartJob cloud storage and connected to this account.'
               : '$fileName is now connected to your SmartJob account. Review the suggestions below and keep refining your strongest sections.',
@@ -359,6 +363,29 @@ class SmartJobController extends Notifier<SmartJobState> {
     );
   }
 
+  void connectUploadedCv({
+    required String fileName,
+    String remoteStoragePath = '',
+    String uploadedCvBase64 = '',
+    String uploadedCvMimeType = '',
+  }) {
+    _updateProfile(
+      (profile) => profile.copyWith(
+        hasUploadedCv: true,
+        cvInsight: profile.cvInsight.copyWith(
+          fileName: fileName,
+          remoteStoragePath: remoteStoragePath,
+          uploadedCvBase64: uploadedCvBase64,
+          uploadedCvMimeType: uploadedCvMimeType,
+          parsedSummary: uploadedCvMimeType == 'application/pdf'
+              ? '$fileName is connected and ready for live preview, ATS scoring, and export.'
+              : '$fileName is connected to SmartJob. PDF preview is available for PDF uploads, and your parsed content stays editable below.',
+        ),
+      ),
+      autosaveLabel:
+          remoteStoragePath.isNotEmpty ? 'CV uploaded and synced just now' : 'CV uploaded just now',
+    );
+  }
   void completeOnboardingForBuilder({
     required List<String> targetRoles,
     required List<String> preferredLocations,
@@ -373,6 +400,9 @@ class SmartJobController extends Notifier<SmartJobState> {
         ),
         cvInsight: profile.cvInsight.copyWith(
           fileName: _draftFileName(profile.fullName),
+          remoteStoragePath: '',
+          uploadedCvBase64: '',
+          uploadedCvMimeType: '',
           parsedSummary:
               'Your builder draft is ready. Add experience, projects, and portfolio links to unlock a stronger one-page CV.',
         ),
@@ -394,6 +424,9 @@ class SmartJobController extends Notifier<SmartJobState> {
         ),
         cvInsight: profile.cvInsight.copyWith(
           fileName: _draftFileName(profile.fullName),
+          remoteStoragePath: '',
+          uploadedCvBase64: '',
+          uploadedCvMimeType: '',
           parsedSummary:
               'Your SmartJob builder is ready. Add your details and generate a polished CV draft.',
         ),
@@ -409,6 +442,9 @@ class SmartJobController extends Notifier<SmartJobState> {
         hasUploadedCv: false,
         cvInsight: profile.cvInsight.copyWith(
           fileName: _draftFileName(profile.fullName),
+          remoteStoragePath: '',
+          uploadedCvBase64: '',
+          uploadedCvMimeType: '',
           parsedSummary:
               'Your CV was generated from your SmartJob builder data. Review the preview, switch templates, and keep refining sections anytime.',
         ),
@@ -1037,6 +1073,11 @@ final applicationStatsProvider = Provider<Map<ApplicationStatus, int>>((ref) {
       status: applications.where((app) => app.status == status).length,
   };
 });
+
+
+
+
+
 
 
 

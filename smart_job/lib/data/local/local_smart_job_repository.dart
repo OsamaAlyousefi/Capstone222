@@ -1,4 +1,4 @@
-import 'dart:async';
+﻿import 'dart:async';
 
 import 'package:flutter/material.dart';
 
@@ -170,6 +170,8 @@ class LocalSmartJobRepository implements SmartJobRepository {
             parsedSummary:
                 'Your SmartJob CV draft is ready. Add sections to improve ATS strength and recruiter trust.',
             remoteStoragePath: '',
+            uploadedCvBase64: '',
+            uploadedCvMimeType: '',
             accentColorHex: '#5D8CC3',
             fontFamily: 'Inter',
             sectionOrder: defaultCvSectionOrder,
@@ -310,6 +312,8 @@ class LocalSmartJobRepository implements SmartJobRepository {
         'selectedTemplate': profile.cvInsight.selectedTemplate,
         'parsedSummary': profile.cvInsight.parsedSummary,
         'remoteStoragePath': profile.cvInsight.remoteStoragePath,
+        'uploadedCvBase64': profile.cvInsight.uploadedCvBase64,
+        'uploadedCvMimeType': profile.cvInsight.uploadedCvMimeType,
         'accentColorHex': profile.cvInsight.accentColorHex,
         'fontFamily': profile.cvInsight.fontFamily,
         'sectionOrder': profile.cvInsight.sectionOrder,
@@ -390,6 +394,8 @@ class LocalSmartJobRepository implements SmartJobRepository {
             cvInsight['selectedTemplate'] as String? ?? 'Classic Black & White Professional',
         parsedSummary: cvInsight['parsedSummary'] as String? ?? '',
         remoteStoragePath: cvInsight['remoteStoragePath'] as String? ?? '',
+        uploadedCvBase64: cvInsight['uploadedCvBase64'] as String? ?? '',
+        uploadedCvMimeType: cvInsight['uploadedCvMimeType'] as String? ?? '',
         accentColorHex: cvInsight['accentColorHex'] as String? ?? '#5D8CC3',
         fontFamily: cvInsight['fontFamily'] as String? ?? 'Inter',
         sectionOrder:
@@ -570,5 +576,8 @@ class LocalSmartJobRepository implements SmartJobRepository {
     return parts.map((part) => part[0].toUpperCase()).join();
   }
 }
+
+
+
 
 

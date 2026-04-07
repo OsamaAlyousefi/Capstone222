@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+﻿import 'package:flutter/material.dart';
 
 import '../../domain/models/application.dart';
 import '../../domain/models/job.dart';
@@ -137,6 +137,8 @@ class MockSmartJobRepository {
         parsedSummary:
             'AI parsing will extract role history, skills, and achievements after upload.',
         remoteStoragePath: '',
+        uploadedCvBase64: '',
+        uploadedCvMimeType: '',
         accentColorHex: '#5D8CC3',
         fontFamily: 'Inter',
         sectionOrder: defaultCvSectionOrder,
@@ -214,6 +216,8 @@ class MockSmartJobRepository {
         parsedSummary:
             'Your SmartJob CV draft is ready. Add sections to improve ATS strength and recruiter trust.',
         remoteStoragePath: '',
+        uploadedCvBase64: '',
+        uploadedCvMimeType: '',
         accentColorHex: '#5D8CC3',
         fontFamily: 'Inter',
         sectionOrder: defaultCvSectionOrder,
@@ -574,6 +578,8 @@ class MockSmartJobRepository {
     ];
   }
 }
+
+
 
 
 
