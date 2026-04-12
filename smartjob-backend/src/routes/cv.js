@@ -4,6 +4,7 @@ import { Router } from 'express';
 import {
   analyzeExistingCv,
   deleteCv,
+  generateCv,
   getCv,
   getCvHistory,
   restoreCvHistory,
@@ -20,6 +21,7 @@ const upload = multer({
 const router = Router();
 
 router.post('/upload', upload.single('file'), uploadCv);
+router.post('/generate', generateCv);
 router.get('/history', getCvHistory);
 router.post('/restore/:historyId', restoreCvHistory);
 router.get('/', getCv);

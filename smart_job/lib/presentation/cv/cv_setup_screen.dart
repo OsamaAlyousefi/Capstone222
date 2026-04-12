@@ -180,6 +180,7 @@ class _CvSetupScreenState extends ConsumerState<CvSetupScreen> {
   void _save() {
     final controller = ref.read(smartJobControllerProvider.notifier);
     final profile = ref.read(smartJobControllerProvider).profile;
+    final isOnboardingBuilderFlow = !profile.hasCompletedOnboarding;
 
     controller.updateProfileWorkspace(
       fullName: _nameController.text.trim(),
@@ -209,11 +210,21 @@ class _CvSetupScreenState extends ConsumerState<CvSetupScreen> {
       values: _multiParagraph(_projectsController.text),
     );
 
+    if (isOnboardingBuilderFlow) {
+      controller.finalizeBuilderOnboarding();
+    }
+
     if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('CV content updated.')),
+        SnackBar(
+          content: Text(
+            isOnboardingBuilderFlow
+                ? 'CV draft created. Welcome to SmartJob.'
+                : 'CV content updated.',
+          ),
+        ),
       );
-      context.go(AppRoute.cv);
+      context.go(isOnboardingBuilderFlow ? AppRoute.main : AppRoute.cv);
     }
   }
 

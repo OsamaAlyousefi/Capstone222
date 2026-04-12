@@ -255,6 +255,56 @@ export const improveCvSection = async ({
   return (response.text ?? '').trim();
 };
 
+const fallbackGeneratedCvText = (formData) => {
+  const experience = Array.isArray(formData.experience) ? formData.experience : [];
+  const education = Array.isArray(formData.education) ? formData.education : [];
+  const skills = Array.isArray(formData.skills) ? formData.skills : [];
+  const projects = Array.isArray(formData.projects) ? formData.projects : [];
+
+  return [
+    `${formData.name || 'Candidate Name'}`,
+    `${formData.title || 'Professional Summary'}`,
+    '',
+    'SUMMARY',
+    `${formData.name || 'The candidate'} is building a focused, ATS-friendly resume tailored for ${formData.title || 'their next role'}.`,
+    '',
+    'EXPERIENCE',
+    ...(experience.length > 0 ? experience : ['Add professional experience with action-oriented impact statements.']),
+    '',
+    'EDUCATION',
+    ...(education.length > 0 ? education : ['Add degree, institution, and graduation year.']),
+    '',
+    'SKILLS',
+    ...(skills.length > 0 ? [skills.join(', ')] : ['Add technical and professional skills here.']),
+    '',
+    'PROJECTS',
+    ...(projects.length > 0 ? projects : ['Add one strong project that shows ownership and results.'])
+  ].join('\n');
+};
+
+export const generateCvText = async (formData) => {
+  if (!gemini) {
+    return fallbackGeneratedCvText(formData);
+  }
+
+  const response = await gemini.models.generateContent({
+    model: 'gemini-1.5-flash',
+    contents: [
+      'Generate a professional, ATS-optimized CV in clean plain text for the following person.',
+      'Format with clear section headers: SUMMARY, EXPERIENCE, EDUCATION, SKILLS, PROJECTS.',
+      'Use strong action verbs and keep it to one page worth of content.',
+      'Return ONLY the CV text, no extra commentary.',
+      `Data: ${JSON.stringify(formData)}`
+    ].join('\n\n'),
+    config: {
+      temperature: 0.5
+    }
+  });
+
+  const text = (response.text ?? '').trim();
+  return text.isEmpty ? fallbackGeneratedCvText(formData) : text;
+};
+
 export const analyzeKeywordGap = async ({
   candidateSkills,
   jobMarketText

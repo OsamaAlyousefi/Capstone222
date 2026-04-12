@@ -7,9 +7,14 @@ class SmartJobRemoteSync {
   SmartJobRemoteSync._(this._client);
 
   static const String accountTable = 'smart_job_accounts';
-  static const String cvBucket = 'smart-job-cvs';
+  static const String cvBucket = 'cvs';
+  static const String profilesTable = 'profiles';
 
   final SupabaseClient _client;
+
+  static SmartJobRemoteSync fromClient(SupabaseClient client) {
+    return SmartJobRemoteSync._(client);
+  }
 
   static Future<SmartJobRemoteSync?> initializeFromEnvironment() async {
     const supabaseUrl = String.fromEnvironment('SUPABASE_URL');
@@ -75,19 +80,44 @@ class SmartJobRemoteSync {
     required String fileName,
     required Uint8List bytes,
   }) async {
-    final normalizedEmail = _normalizeEmail(email);
-    final objectPath = '$normalizedEmail/${_sanitizeFileName(fileName)}';
+    final user = _client.auth.currentUser;
+    if (user == null) {
+      throw StateError('You need to be signed in before uploading a CV.');
+    }
+
+    final objectPath =
+        '${user.id}/${DateTime.now().millisecondsSinceEpoch}_${_sanitizeFileName(fileName)}';
 
     await _client.storage.from(cvBucket).uploadBinary(
           objectPath,
           bytes,
           fileOptions: FileOptions(
-            upsert: true,
+            upsert: false,
             contentType: _contentTypeFor(fileName),
           ),
         );
 
+    final publicUrl = _client.storage.from(cvBucket).getPublicUrl(objectPath);
+    await _client.from(profilesTable).update({
+      'cv_url': publicUrl,
+      'updated_at': DateTime.now().toUtc().toIso8601String(),
+    }).eq('id', user.id);
+
     return objectPath;
+  }
+
+  Future<String> createCvPreviewUrl(String storagePath) async {
+    final trimmed = storagePath.trim();
+    if (trimmed.isEmpty) {
+      throw ArgumentError('storagePath cannot be empty');
+    }
+
+    final publicUrl = _client.storage.from(cvBucket).getPublicUrl(trimmed);
+    if (publicUrl.isNotEmpty) {
+      return publicUrl;
+    }
+
+    return _client.storage.from(cvBucket).createSignedUrl(trimmed, 60 * 60);
   }
 
   String _normalizeEmail(String email) => email.trim().toLowerCase();

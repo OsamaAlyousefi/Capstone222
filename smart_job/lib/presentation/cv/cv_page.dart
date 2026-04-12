@@ -183,6 +183,17 @@ class _CVScreenState extends ConsumerState<CVScreen> {
       );
     }
 
+    if (cv.uploadedCvMimeType == 'application/pdf' &&
+        cv.remoteStoragePath.isNotEmpty &&
+        remoteSync != null) {
+      return _RemotePdfPreview(
+        controller: _pdfController,
+        remoteSync: remoteSync,
+        storagePath: cv.remoteStoragePath,
+        fallbackBytes: pdfBytes,
+      );
+    }
+
     if (pdfBytes != null) {
       return _EmbeddedPdfPreview(
         controller: _pdfController,
@@ -340,18 +351,29 @@ class _CVScreenState extends ConsumerState<CVScreen> {
       }
 
       var remoteStoragePath = '';
+      var usedLocalFallback = false;
       if (remoteSync != null) {
-        if (mounted) {
-          setState(() {
-            _uploadProgress = 0.52;
-            _uploadStageLabel = 'Syncing CV to SmartJob cloud...';
-          });
+        try {
+          if (mounted) {
+            setState(() {
+              _uploadProgress = 0.52;
+              _uploadStageLabel = 'Syncing CV to SmartJob cloud...';
+            });
+          }
+          remoteStoragePath = await remoteSync.uploadCv(
+            email: profile.email,
+            fileName: selectedFile.name,
+            bytes: bytes,
+          );
+        } catch (error) {
+          usedLocalFallback = true;
+          if (mounted) {
+            _showMessage(
+              context,
+              '${_describeCvUploadError(error)} SmartJob kept a local copy so your CV workspace still updates.',
+            );
+          }
         }
-        remoteStoragePath = await remoteSync.uploadCv(
-          email: profile.email,
-          fileName: selectedFile.name,
-          bytes: bytes,
-        );
       }
 
       if (!mounted) {
@@ -379,15 +401,17 @@ class _CVScreenState extends ConsumerState<CVScreen> {
       });
       _showMessage(
         context,
-        mimeType == 'application/pdf'
-            ? 'CV uploaded. Live PDF preview is ready.'
-            : 'CV uploaded. Word files are connected, but inline preview works for PDFs only.',
+        usedLocalFallback
+            ? 'CV connected locally. Live preview is ready, and cloud sync can be retried later.'
+            : mimeType == 'application/pdf'
+                ? 'CV uploaded. Live PDF preview is ready.'
+                : 'CV uploaded. Word files are connected, but inline preview works for PDFs only.',
       );
-    } catch (_) {
+    } catch (error) {
       if (mounted) {
         _showMessage(
           context,
-          'Uploading your CV failed. Please try again.',
+          _describeCvUploadError(error),
         );
       }
     } finally {
@@ -399,6 +423,23 @@ class _CVScreenState extends ConsumerState<CVScreen> {
         });
       }
     }
+  }
+
+
+  String _describeCvUploadError(Object error) {
+    final message = error.toString().replaceFirst('Exception: ', '').trim();
+    final lower = message.toLowerCase();
+
+    if (lower.contains('bucket') && lower.contains('not found')) {
+      return 'CV upload failed because the Supabase storage bucket `cvs` was not found.';
+    }
+    if (lower.contains('row-level security') || lower.contains('permission')) {
+      return 'CV upload failed because your Supabase storage policies are blocking uploads for this signed-in user.';
+    }
+    if (lower.contains('signed in')) {
+      return message;
+    }
+    return 'Uploading your CV failed${message.isEmpty ? '.' : ': $message'}';
   }
 
   Future<void> _showExportSheet(
@@ -624,50 +665,79 @@ class _CVScreenState extends ConsumerState<CVScreen> {
 
     await showModalBottomSheet<void>(
       context: context,
-      backgroundColor: AppColors.surface(Theme.of(context).brightness),
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
-      ),
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
       builder: (sheetContext) {
-        return SafeArea(
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(20, 16, 20, 20),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  'ATS Score Breakdown',
-                  style: Theme.of(context).textTheme.displaySmall,
+        final brightness = Theme.of(sheetContext).brightness;
+        return DraggableScrollableSheet(
+          initialChildSize: 0.62,
+          minChildSize: 0.4,
+          maxChildSize: 0.92,
+          expand: false,
+          builder: (context, scrollController) {
+            return Container(
+              decoration: BoxDecoration(
+                color: AppColors.surface(brightness),
+                borderRadius: const BorderRadius.vertical(
+                  top: Radius.circular(28),
                 ),
-                const SizedBox(height: 6),
-                Text(
-                  'A recruiter-grade breakdown of what currently helps or hurts automated screening.',
-                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                        color:
-                            AppColors.subtext(Theme.of(context).brightness),
+              ),
+              child: Column(
+                children: [
+                  Container(
+                    margin: const EdgeInsets.symmetric(vertical: 12),
+                    width: 42,
+                    height: 4,
+                    decoration: BoxDecoration(
+                      color: AppColors.subtext(brightness).withValues(alpha: 0.35),
+                      borderRadius: BorderRadius.circular(999),
+                    ),
+                  ),
+                  Expanded(
+                    child: SingleChildScrollView(
+                      controller: scrollController,
+                      padding: const EdgeInsets.fromLTRB(20, 0, 20, 32),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            'ATS Score Breakdown',
+                            style: Theme.of(context).textTheme.displaySmall,
+                          ),
+                          const SizedBox(height: 6),
+                          Text(
+                            'A recruiter-grade breakdown of what currently helps or hurts automated screening.',
+                            style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                                  color: AppColors.subtext(brightness),
+                                ),
+                          ),
+                          const SizedBox(height: 18),
+                          const Divider(height: 1),
+                          const SizedBox(height: 18),
+                          _BreakdownRow(
+                            label: 'Formatting score',
+                            score: formattingScore,
+                          ),
+                          _BreakdownRow(
+                            label: 'Keyword density',
+                            score: keywordDensity,
+                          ),
+                          _BreakdownRow(
+                            label: 'Section completeness',
+                            score: sectionCompleteness,
+                          ),
+                          _BreakdownRow(
+                            label: 'File compatibility',
+                            score: fileCompatibility,
+                          ),
+                        ],
                       ),
-                ),
-                const SizedBox(height: 18),
-                _BreakdownRow(
-                  label: 'Formatting score',
-                  score: formattingScore,
-                ),
-                _BreakdownRow(
-                  label: 'Keyword density',
-                  score: keywordDensity,
-                ),
-                _BreakdownRow(
-                  label: 'Section completeness',
-                  score: sectionCompleteness,
-                ),
-                _BreakdownRow(
-                  label: 'File compatibility',
-                  score: fileCompatibility,
-                ),
-              ],
-            ),
-          ),
+                    ),
+                  ),
+                ],
+              ),
+            );
+          },
         );
       },
     );
@@ -738,7 +808,16 @@ class _CVScreenState extends ConsumerState<CVScreen> {
       builder.add(chunk);
     }
     final streamedBytes = builder.takeBytes();
-    return streamedBytes.isEmpty ? null : streamedBytes;
+    if (streamedBytes.isNotEmpty) {
+      return streamedBytes;
+    }
+
+    try {
+      final xFileBytes = await file.xFile.readAsBytes();
+      return xFileBytes.isEmpty ? null : xFileBytes;
+    } catch (_) {
+      return null;
+    }
   }
 
   String _mimeTypeForFileName(String fileName) {
@@ -1330,6 +1409,160 @@ class _PreviewShell extends StatelessWidget {
   }
 }
 
+class _RemotePdfPreview extends StatefulWidget {
+  const _RemotePdfPreview({
+    required this.controller,
+    required this.remoteSync,
+    required this.storagePath,
+    this.fallbackBytes,
+  });
+
+  final PdfViewerController controller;
+  final SmartJobRemoteSync remoteSync;
+  final String storagePath;
+  final Uint8List? fallbackBytes;
+
+  @override
+  State<_RemotePdfPreview> createState() => _RemotePdfPreviewState();
+}
+
+class _RemotePdfPreviewState extends State<_RemotePdfPreview> {
+  late final Future<String> _previewUrlFuture;
+  bool _isLoaded = false;
+  String? _loadError;
+
+  @override
+  void initState() {
+    super.initState();
+    _previewUrlFuture = widget.remoteSync.createCvPreviewUrl(widget.storagePath);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return FutureBuilder<String>(
+      future: _previewUrlFuture,
+      builder: (context, snapshot) {
+        if (snapshot.connectionState != ConnectionState.done) {
+          return const _PdfPreviewScaffold(child: _PdfPreviewSkeleton());
+        }
+
+        if (snapshot.hasError || !snapshot.hasData || snapshot.data!.isEmpty) {
+          if (widget.fallbackBytes != null) {
+            return _EmbeddedPdfPreview(
+              controller: widget.controller,
+              bytes: widget.fallbackBytes!,
+            );
+          }
+
+          return _PdfPreviewScaffold(
+            child: _PdfPreviewErrorState(
+              message: 'SmartJob could not load your uploaded PDF preview.',
+            ),
+          );
+        }
+
+        return _PdfPreviewScaffold(
+          child: Stack(
+            fit: StackFit.expand,
+            children: [
+              SfPdfViewer.network(
+                snapshot.data!,
+                key: ValueKey(snapshot.data),
+                controller: widget.controller,
+                pageSpacing: 0,
+                canShowScrollHead: false,
+                canShowPaginationDialog: false,
+                onDocumentLoaded: (_) {
+                  if (mounted) {
+                    setState(() => _isLoaded = true);
+                  }
+                },
+                onDocumentLoadFailed: (details) {
+                  if (mounted) {
+                    setState(() {
+                      _isLoaded = true;
+                      _loadError = details.description;
+                    });
+                  }
+                },
+              ),
+              IgnorePointer(
+                ignoring: _isLoaded,
+                child: AnimatedOpacity(
+                  duration: const Duration(milliseconds: 220),
+                  opacity: _isLoaded ? 0 : 1,
+                  child: const _PdfPreviewSkeleton(),
+                ),
+              ),
+              if (_loadError != null)
+                _PdfPreviewErrorState(message: _loadError!),
+            ],
+          ),
+        );
+      },
+    );
+  }
+}
+
+class _PdfPreviewScaffold extends StatelessWidget {
+  const _PdfPreviewScaffold({required this.child});
+
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      height: 860,
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(22),
+        color: Colors.white,
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: child,
+    );
+  }
+}
+
+class _PdfPreviewErrorState extends StatelessWidget {
+  const _PdfPreviewErrorState({required this.message});
+
+  final String message;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      color: Colors.white,
+      padding: const EdgeInsets.all(24),
+      alignment: Alignment.center,
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 420),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(
+              Icons.picture_as_pdf_outlined,
+              size: 42,
+              color: AppColors.midnight,
+            ),
+            const SizedBox(height: 14),
+            Text(
+              'Preview unavailable',
+              style: Theme.of(context).textTheme.headlineSmall,
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 8),
+            Text(
+              message,
+              style: Theme.of(context).textTheme.bodyMedium,
+              textAlign: TextAlign.center,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 class _EmbeddedPdfPreview extends StatefulWidget {
   const _EmbeddedPdfPreview({
     required this.controller,
@@ -1348,13 +1581,7 @@ class _EmbeddedPdfPreviewState extends State<_EmbeddedPdfPreview> {
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      height: 860,
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(22),
-        color: Colors.white,
-      ),
-      clipBehavior: Clip.antiAlias,
+    return _PdfPreviewScaffold(
       child: Stack(
         fit: StackFit.expand,
         children: [
@@ -1401,72 +1628,74 @@ class _PreviewLoadingState extends StatelessWidget {
     final brightness = Theme.of(context).brightness;
 
     return Container(
-      height: 680,
+      constraints: const BoxConstraints(minHeight: 520),
       padding: const EdgeInsets.all(22),
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(22),
         color: AppColors.surfaceMuted(brightness),
         border: Border.all(color: AppColors.stroke(brightness)),
       ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              const SizedBox(
-                width: 22,
-                height: 22,
-                child: CircularProgressIndicator(strokeWidth: 2.5),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Text(
-                  label,
-                  style: Theme.of(context).textTheme.titleMedium,
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 22),
-          Text(
-            stageLabel,
-            style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                  color: AppColors.subtext(brightness),
-                ),
-          ),
-          const SizedBox(height: 12),
-          ClipRRect(
-            borderRadius: BorderRadius.circular(999),
-            child: LinearProgressIndicator(
-              value: progress,
-              minHeight: 10,
-            ),
-          ),
-          const SizedBox(height: 22),
-          for (final width in [0.92, 0.7, 1.0, 0.86, 0.76])
-            Padding(
-              padding: const EdgeInsets.only(bottom: 12),
-              child: FractionallySizedBox(
-                alignment: Alignment.centerLeft,
-                widthFactor: width,
-                child: Container(
+      child: SingleChildScrollView(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                const SizedBox(
+                  width: 22,
                   height: 22,
-                  decoration: BoxDecoration(
-                    color: AppColors.surface(brightness),
-                    borderRadius: BorderRadius.circular(999),
+                  child: CircularProgressIndicator(strokeWidth: 2.5),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Text(
+                    label,
+                    style: Theme.of(context).textTheme.titleMedium,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 22),
+            Text(
+              stageLabel,
+              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                    color: AppColors.subtext(brightness),
+                  ),
+            ),
+            const SizedBox(height: 12),
+            ClipRRect(
+              borderRadius: BorderRadius.circular(999),
+              child: LinearProgressIndicator(
+                value: progress,
+                minHeight: 10,
+              ),
+            ),
+            const SizedBox(height: 22),
+            for (final width in [0.92, 0.7, 1.0, 0.86, 0.76])
+              Padding(
+                padding: const EdgeInsets.only(bottom: 12),
+                child: FractionallySizedBox(
+                  alignment: Alignment.centerLeft,
+                  widthFactor: width,
+                  child: Container(
+                    height: 22,
+                    decoration: BoxDecoration(
+                      color: AppColors.surface(brightness),
+                      borderRadius: BorderRadius.circular(999),
+                    ),
                   ),
                 ),
               ),
+            const SizedBox(height: 18),
+            Container(
+              height: 260,
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(18),
+              ),
             ),
-          const Spacer(),
-          Container(
-            height: 420,
-            decoration: BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.circular(18),
-            ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }
@@ -1524,13 +1753,13 @@ class _UploadEmptyState extends StatelessWidget {
               ),
               const SizedBox(height: 18),
               Text(
-                'Upload your CV to get started',
+                'Choose how you want to start',
                 textAlign: TextAlign.center,
                 style: Theme.of(context).textTheme.displaySmall,
               ),
               const SizedBox(height: 10),
               Text(
-                'The live preview will render your real uploaded PDF here. If you are still building your CV inside SmartJob, you can jump into the editor first.',
+                'Upload your existing PDF CV for instant analysis, or start with SmartJob AI and build one from your profile details.',
                 textAlign: TextAlign.center,
                 style: Theme.of(context).textTheme.bodyLarge?.copyWith(
                       color: AppColors.subtext(brightness),
@@ -1553,12 +1782,12 @@ class _UploadEmptyState extends StatelessWidget {
                   ElevatedButton.icon(
                     onPressed: onUpload,
                     icon: const Icon(Icons.file_upload_outlined),
-                    label: const Text('Upload PDF or Word CV'),
+                    label: const Text('Upload Existing CV'),
                   ),
                   OutlinedButton.icon(
                     onPressed: onBuildInstead,
-                    icon: const Icon(Icons.edit_note_outlined),
-                    label: const Text('Edit CV content'),
+                    icon: const Icon(Icons.auto_awesome_outlined),
+                    label: const Text('Build with AI'),
                   ),
                 ],
               ),

@@ -2,6 +2,7 @@
 import 'dart:typed_data';
 
 import 'package:file_picker/file_picker.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_animate/flutter_animate.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -98,7 +99,12 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
                         ? 'Choose a real PDF, DOC, or DOCX file and upload it into SmartJob cloud storage.'
                         : 'Choose a real PDF, DOC, or DOCX file from your device and connect it locally now.',
                     selected: isUpload,
-                    onTap: () => setState(() => _cvMode = _CvMode.upload),
+                    onTap: () {
+                      setState(() => _cvMode = _CvMode.upload);
+                      if (!_isPickingFile && !_isUploading) {
+                        _pickCvFile();
+                      }
+                    },
                   );
                   final builderCard = _ModeCard(
                     icon: LucideIcons.penTool,
@@ -106,7 +112,12 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
                     subtitle:
                         'Skip uploading and create a structured resume draft directly in the SmartJob builder.',
                     selected: !isUpload,
-                    onTap: () => setState(() => _cvMode = _CvMode.build),
+                    onTap: () {
+                      setState(() => _cvMode = _CvMode.build);
+                      if (!_isUploading) {
+                        _finishBuilderFlow();
+                      }
+                    },
                   );
 
                   if (constraints.maxWidth < 760) {
@@ -301,7 +312,10 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
 
       final hasBytes = selectedFile.bytes != null && selectedFile.bytes!.isNotEmpty;
       final hasStream = selectedFile.readStream != null;
-      if (!hasBytes && !hasStream) {
+      final hasFilePath = !kIsWeb &&
+          selectedFile.path != null &&
+          selectedFile.path!.isNotEmpty;
+      if (!hasBytes && !hasStream && !hasFilePath) {
         setState(() => _isPickingFile = false);
         _showMessage('SmartJob could not read that file. Please choose another CV.');
         return;
@@ -341,6 +355,7 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
 
     final remoteSync = ref.read(smartJobRemoteSyncProvider);
     var remoteStoragePath = '';
+    var usedLocalFallback = false;
 
     try {
       final bytes = await _readSelectedFileBytes(selectedFile);
@@ -350,12 +365,21 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
       }
 
       if (remoteSync != null) {
-        final email = ref.read(smartJobControllerProvider).profile.email;
-        remoteStoragePath = await remoteSync.uploadCv(
-          email: email,
-          fileName: selectedFile.name,
-          bytes: bytes,
-        );
+        try {
+          final email = ref.read(smartJobControllerProvider).profile.email;
+          remoteStoragePath = await remoteSync.uploadCv(
+            email: email,
+            fileName: selectedFile.name,
+            bytes: bytes,
+          );
+        } catch (error) {
+          usedLocalFallback = true;
+          if (mounted) {
+            _showMessage(
+              '${_describeCvUploadError(error)} SmartJob saved the CV locally so you can keep going.',
+            );
+          }
+        }
       }
 
       if (!mounted) {
@@ -370,12 +394,17 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
             uploadedCvBase64: _isPdfFile(selectedFile.name) ? base64Encode(bytes) : '',
             uploadedCvMimeType: _mimeTypeForFileName(selectedFile.name),
           );
+      if (usedLocalFallback && mounted) {
+        _showMessage(
+          'Cloud sync is still unavailable, but your CV is connected in SmartJob now.',
+        );
+      }
       context.go(AppRoute.main);
-    } catch (_) {
+    } catch (error) {
       if (!mounted) {
         return;
       }
-      _showMessage('Uploading your CV failed. Please try again.');
+      _showMessage(_describeCvUploadError(error));
     } finally {
       if (mounted) {
         setState(() => _isUploading = false);
@@ -399,7 +428,16 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
       builder.add(chunk);
     }
     final streamedBytes = builder.takeBytes();
-    return streamedBytes.isEmpty ? null : streamedBytes;
+    if (streamedBytes.isNotEmpty) {
+      return streamedBytes;
+    }
+
+    try {
+      final xFileBytes = await file.xFile.readAsBytes();
+      return xFileBytes.isEmpty ? null : xFileBytes;
+    } catch (_) {
+      return null;
+    }
   }
 
   bool _isPdfFile(String fileName) {
@@ -418,6 +456,23 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
       return 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
     }
     return 'application/octet-stream';
+  }
+
+
+  String _describeCvUploadError(Object error) {
+    final message = error.toString().replaceFirst('Exception: ', '').trim();
+    final lower = message.toLowerCase();
+
+    if (lower.contains('bucket') && lower.contains('not found')) {
+      return 'CV upload failed because the Supabase storage bucket `cvs` was not found.';
+    }
+    if (lower.contains('row-level security') || lower.contains('permission')) {
+      return 'CV upload failed because your Supabase storage policies are blocking uploads for this signed-in user.';
+    }
+    if (lower.contains('signed in')) {
+      return message;
+    }
+    return 'Uploading your CV failed${message.isEmpty ? '.' : ': $message'}';
   }
 
   void _finishBuilderFlow() {

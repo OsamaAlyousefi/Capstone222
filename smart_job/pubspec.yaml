@@ -40,11 +40,13 @@ dependencies:
   flutter_animate: ^4.5.2
   lucide_icons: ^0.257.0
   shared_preferences: ^2.5.3
-  file_picker: ^10.3.10
-  syncfusion_flutter_pdfviewer: ^32.2.9
+  flutter_dotenv: ^5.1.0
+  file_picker: ^8.0.0
+  syncfusion_flutter_pdfviewer: ^26.0.0
+  syncfusion_flutter_core: ^26.0.0
   hive: ^2.2.3
   hive_flutter: ^1.1.0
-  supabase_flutter: ^2.12.2
+  supabase_flutter: ^2.0.0
 
 dev_dependencies:
   flutter_test:
@@ -67,6 +69,9 @@ flutter:
   # included with your application, so that you can use the icons in
   # the material Icons class.
   uses-material-design: true
+
+  assets:
+    - assets/.env
 
   # To add assets to your application, add an assets section, like this:
   # assets:

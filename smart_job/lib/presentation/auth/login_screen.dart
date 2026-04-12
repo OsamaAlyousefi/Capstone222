@@ -3,6 +3,7 @@ import 'package:flutter_animate/flutter_animate.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:lucide_icons/lucide_icons.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../../application/controllers/auth_controller.dart';
 import '../../application/controllers/smart_job_controller.dart';
@@ -10,6 +11,7 @@ import '../../data/local/local_smart_job_repository.dart';
 import '../../data/remote/smart_job_remote_sync.dart';
 import '../../data/repositories/smart_job_repository.dart';
 import '../../router/app_router.dart';
+import '../../services/auth_service.dart';
 import '../../theme/app_colors.dart';
 import '../shared/widgets/smart_job_ui.dart';
 
@@ -43,35 +45,49 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
     setState(() => _isSubmitting = true);
 
     final email = _emailController.text.trim().toLowerCase();
+    final password = _passwordController.text;
     final repository = ref.read(smartJobRepositoryProvider);
     final remoteSync = ref.read(smartJobRemoteSyncProvider);
 
-    if (remoteSync != null && repository is LocalSmartJobRepository) {
-      try {
-        final remoteAccount = await remoteSync.fetchAccount(email);
-        if (remoteAccount != null) {
-          repository.cacheRemoteAccount(remoteAccount);
+    try {
+      await AuthService.signIn(email, password);
+
+      if (remoteSync != null && repository is LocalSmartJobRepository) {
+        try {
+          final remoteAccount = await remoteSync.fetchAccount(email);
+          if (remoteAccount != null) {
+            repository.cacheRemoteAccount(remoteAccount);
+          }
+        } catch (_) {
+          // Fall back to local storage if cloud sync is unavailable.
         }
-      } catch (_) {
-        // Fall back to local storage if cloud sync is unavailable.
+      }
+
+      if (!mounted) {
+        return;
+      }
+
+      ref.read(authControllerProvider.notifier).signIn(email);
+      ref.read(smartJobControllerProvider.notifier).loadAccountForLogin(email);
+    } on AuthException catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(error.message)),
+        );
+      }
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Login failed. Please try again.'),
+          ),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _isSubmitting = false);
       }
     }
-
-    if (!mounted) {
-      return;
-    }
-
-    ref.read(authControllerProvider.notifier).signIn(email);
-    ref.read(smartJobControllerProvider.notifier).loadAccountForLogin(email);
-    final hasCompletedOnboarding = ref
-        .read(smartJobControllerProvider)
-        .profile
-        .hasCompletedOnboarding;
-
-    setState(() => _isSubmitting = false);
-    context.go(
-      hasCompletedOnboarding ? AppRoute.main : AppRoute.onboarding,
-    );
   }
 
   @override

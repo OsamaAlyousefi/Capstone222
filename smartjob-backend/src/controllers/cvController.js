@@ -1,7 +1,8 @@
 import axios from 'axios';
+import PDFDocument from 'pdfkit';
 
 import { jobsQueryCache, matchScoreCache } from '../services/cache.js';
-import { analyzeCvText } from '../services/gemini.js';
+import { analyzeCvText, generateCvText } from '../services/gemini.js';
 import { extractPdfText } from '../services/pdfParser.js';
 import {
   buildCvStoragePath,
@@ -94,6 +95,41 @@ const extractStoragePathFromPublicUrl = (publicUrl) => {
   return publicUrl.slice(index + marker.length);
 };
 
+const buildPdfBufferFromText = async ({ displayName, title, cvText }) => {
+  const document = new PDFDocument({
+    margin: 50,
+    size: 'A4'
+  });
+  const chunks = [];
+
+  document.on('data', (chunk) => chunks.push(chunk));
+
+  const completion = new Promise((resolve, reject) => {
+    document.on('end', resolve);
+    document.on('error', reject);
+  });
+
+  document.fontSize(20).font('Helvetica-Bold').text(displayName || 'Resume', {
+    align: 'center'
+  });
+
+  if (title?.trim()) {
+    document.moveDown(0.4);
+    document.fontSize(12).font('Helvetica').text(title.trim(), {
+      align: 'center'
+    });
+  }
+
+  document.moveDown(1.2);
+  document.fontSize(11).font('Helvetica').text(cvText, {
+    align: 'left'
+  });
+  document.end();
+
+  await completion;
+  return Buffer.concat(chunks);
+};
+
 export const uploadCv = asyncHandler(async (req, res) => {
   if (!req.file) {
     throw badRequest('Attach a PDF file in form-data under the "file" field');
@@ -126,6 +162,85 @@ export const uploadCv = asyncHandler(async (req, res) => {
 
   const cvUrl = createPublicCvUrl(storagePath);
   const cvText = await extractPdfText(req.file.buffer);
+  const result = await runAnalysisAndPersist({
+    userId: req.user.id,
+    cvText,
+    cvUrl
+  });
+  matchScoreCache.flushAll();
+  jobsQueryCache.flushAll();
+
+  res.status(201).json({
+    cv_url: result.profile.cv_url,
+    cv_score: result.profile.cv_score,
+    cv_health: result.profile.cv_health,
+    cv_completeness: result.profile.cv_completeness,
+    cv_ats_score: result.profile.cv_ats_score,
+    cv_alignment_score: result.profile.cv_alignment_score,
+    suggestions: result.suggestions
+  });
+});
+
+export const generateCv = asyncHandler(async (req, res) => {
+  const formData = req.body ?? {};
+  const profile = await getCurrentProfile(req.user.id);
+
+  if (profile.cv_url) {
+    await supabaseAdmin.from('cv_history').insert({
+      user_id: req.user.id,
+      cv_url: profile.cv_url,
+      cv_score: profile.cv_score
+    });
+  }
+
+  const normalizedFormData = {
+    ...formData,
+    name: formData.name ?? profile.full_name ?? '',
+    title: formData.title ?? profile.title ?? '',
+    email: formData.email ?? profile.email ?? '',
+    phone: formData.phone ?? profile.phone ?? '',
+    location: formData.location ?? profile.location ?? '',
+    experience: Array.isArray(formData.experience) ? formData.experience : [],
+    education: Array.isArray(formData.education) ? formData.education : [],
+    skills: Array.isArray(formData.skills) ? formData.skills : profile.skills ?? [],
+    projects: Array.isArray(formData.projects) ? formData.projects : []
+  };
+
+  const cvText = await generateCvText(normalizedFormData);
+  const pdfBuffer = await buildPdfBufferFromText({
+    displayName: normalizedFormData.name,
+    title: normalizedFormData.title,
+    cvText
+  });
+
+  const storagePath = buildCvStoragePath(
+    req.user.id,
+    `${normalizedFormData.name || 'smartjob_cv'}.pdf`
+  );
+  const { error: uploadError } = await supabaseAdmin.storage
+    .from(CV_BUCKET)
+    .upload(storagePath, pdfBuffer, {
+      contentType: 'application/pdf',
+      upsert: false
+    });
+
+  if (uploadError) {
+    throw badRequest(uploadError.message, uploadError);
+  }
+
+  const cvUrl = createPublicCvUrl(storagePath);
+
+  await supabaseAdmin
+    .from('profiles')
+    .update({
+      full_name: normalizedFormData.name,
+      title: normalizedFormData.title,
+      phone: normalizedFormData.phone,
+      location: normalizedFormData.location,
+      skills: normalizedFormData.skills
+    })
+    .eq('id', req.user.id);
+
   const result = await runAnalysisAndPersist({
     userId: req.user.id,
     cvText,

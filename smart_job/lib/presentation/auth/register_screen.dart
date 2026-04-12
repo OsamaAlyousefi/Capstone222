@@ -3,10 +3,12 @@ import 'package:flutter_animate/flutter_animate.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:lucide_icons/lucide_icons.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../../application/controllers/auth_controller.dart';
 import '../../application/controllers/smart_job_controller.dart';
 import '../../router/app_router.dart';
+import '../../services/auth_service.dart';
 import '../../theme/app_colors.dart';
 import '../shared/widgets/smart_job_ui.dart';
 
@@ -25,6 +27,7 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
   final _confirmController = TextEditingController();
   bool _obscurePassword = true;
   bool _obscureConfirm = true;
+  bool _isSubmitting = false;
 
   @override
   void dispose() {
@@ -35,20 +38,59 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
     super.dispose();
   }
 
-  void _submit() {
-    if (!(_formKey.currentState?.validate() ?? false)) {
+  Future<void> _submit() async {
+    if (!(_formKey.currentState?.validate() ?? false) || _isSubmitting) {
       return;
     }
 
+    FocusScope.of(context).unfocus();
+    setState(() => _isSubmitting = true);
+
     final name = _nameController.text.trim();
     final email = _emailController.text.trim().toLowerCase();
+    final password = _passwordController.text;
 
-    ref.read(authControllerProvider.notifier).signIn(email);
-    ref.read(smartJobControllerProvider.notifier).registerAccount(
-          fullName: name,
-          email: email,
+    try {
+      final response = await AuthService.signUp(email, password);
+
+      if (!mounted) {
+        return;
+      }
+
+      if (response.session != null) {
+        ref.read(authControllerProvider.notifier).signIn(email);
+        ref.read(smartJobControllerProvider.notifier).registerAccount(
+              fullName: name,
+              email: email,
+            );
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'Signup succeeded. Check your email to confirm your account before logging in.',
+            ),
+          ),
         );
-    context.go(AppRoute.onboarding);
+      }
+    } on AuthException catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(error.message)),
+        );
+      }
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Signup failed. Please try again.'),
+          ),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _isSubmitting = false);
+      }
+    }
   }
 
   @override
@@ -188,12 +230,12 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
             ),
             const SizedBox(height: 24),
             ElevatedButton(
-              onPressed: _submit,
-              child: const Text('Create account'),
+              onPressed: _isSubmitting ? null : _submit,
+              child: Text(_isSubmitting ? 'Creating account...' : 'Create account'),
             ),
             const SizedBox(height: 12),
             OutlinedButton(
-              onPressed: () => context.go(AppRoute.login),
+              onPressed: _isSubmitting ? null : () => context.go(AppRoute.login),
               child: const Text('I already have an account'),
             ),
           ],
