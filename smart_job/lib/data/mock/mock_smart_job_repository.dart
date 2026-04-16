@@ -133,7 +133,7 @@ class MockSmartJobRepository {
           'Cross-functional collaboration',
           'Strong mobile UI craft',
         ],
-        selectedTemplate: 'Classic Black & White Professional',
+        selectedTemplate: 'Classic',
         parsedSummary:
             'AI parsing will extract role history, skills, and achievements after upload.',
         remoteStoragePath: '',
@@ -212,7 +212,7 @@ class MockSmartJobRepository {
           'Structured profile guidance',
           'ATS scoring support',
         ],
-        selectedTemplate: 'Classic Black & White Professional',
+        selectedTemplate: 'Classic',
         parsedSummary:
             'Your SmartJob CV draft is ready. Add sections to improve ATS strength and recruiter trust.',
         remoteStoragePath: '',
@@ -266,6 +266,7 @@ class MockSmartJobRepository {
         postedLabel: '16 min ago',
         matchScore: 0.93,
         isSaved: true,
+        hasEasyApply: true,
       ),
       Job(
         id: 'job_2',
@@ -286,6 +287,7 @@ class MockSmartJobRepository {
         logoLabel: 'LD',
         postedLabel: '44 min ago',
         matchScore: 0.88,
+        hasEasyApply: true,
       ),
       Job(
         id: 'job_3',
@@ -306,6 +308,7 @@ class MockSmartJobRepository {
         logoLabel: 'WF',
         postedLabel: '1 h ago',
         matchScore: 0.84,
+        hasEasyApply: true,
       ),
       Job(
         id: 'job_4',
@@ -326,6 +329,7 @@ class MockSmartJobRepository {
         logoLabel: 'QS',
         postedLabel: '2 h ago',
         matchScore: 0.58,
+        hasEasyApply: true,
       ),
       Job(
         id: 'job_5',
@@ -346,6 +350,7 @@ class MockSmartJobRepository {
         logoLabel: 'SH',
         postedLabel: '3 h ago',
         matchScore: 0.86,
+        hasEasyApply: true,
       ),
       Job(
         id: 'job_6',
@@ -366,6 +371,7 @@ class MockSmartJobRepository {
         logoLabel: 'ML',
         postedLabel: 'Today',
         matchScore: 0.74,
+        hasEasyApply: true,
       ),
     ];
   }

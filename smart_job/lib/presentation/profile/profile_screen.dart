@@ -9,17 +9,60 @@ import '../../application/controllers/smart_job_controller.dart';
 import '../../domain/models/job.dart';
 import '../../domain/models/profile.dart';
 import '../../router/app_router.dart';
+import '../../services/auth_service.dart';
+import '../../services/supabase_data_service.dart';
 import '../../theme/app_colors.dart';
 import '../../theme/smart_job_studio_theme.dart';
 import '../shared/widgets/smart_job_ui.dart';
 
-class ProfileScreen extends ConsumerWidget {
+class ProfileScreen extends ConsumerStatefulWidget {
   const ProfileScreen({super.key});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<ProfileScreen> createState() => _ProfileScreenState();
+}
+
+class _ProfileScreenState extends ConsumerState<ProfileScreen> {
+  bool _isLoading = true;
+  String? _error;
+  UserProfile? _remoteProfile;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadProfile();
+  }
+
+  Future<void> _loadProfile() async {
+    try {
+      final profile = await SupabaseDataService.fetchProfile(
+        ref.read(smartJobControllerProvider).profile,
+      );
+      if (!mounted) {
+        return;
+      }
+
+      setState(() {
+        _remoteProfile = profile;
+        _error = null;
+        _isLoading = false;
+      });
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+
+      setState(() {
+        _error = error.toString();
+        _isLoading = false;
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
     final state = ref.watch(smartJobControllerProvider);
-    final profile = state.profile;
+    final profile = _remoteProfile ?? state.profile;
     final cv = profile.cvInsight;
     final studioTheme = Theme.of(context).extension<SmartJobStudioTheme>()!;
     final applicationsSent = state.applications.length;
@@ -30,6 +73,14 @@ class ProfileScreen extends ConsumerWidget {
     final savedJobMatch = savedJobs.isEmpty
         ? cv.keywordMatchScore
         : ((matchedSavedJobs / savedJobs.length) * 100).round();
+
+    if (_isLoading && _remoteProfile == null && state.profile.email.isEmpty) {
+      return const Center(child: CircularProgressIndicator());
+    }
+
+    if (_error != null && _remoteProfile == null && state.profile.email.isEmpty) {
+      return Center(child: Text('Error: $_error'));
+    }
 
     return SmartJobScrollPage(
       maxWidth: 1320,
@@ -51,12 +102,20 @@ class ProfileScreen extends ConsumerWidget {
                   : 'Turn on public profile first to preview your public page.',
             ),
             onDownloadCv: () => context.go(AppRoute.cv),
-            onLogout: () {
+            onLogout: () async {
+              await AuthService.signOut();
+              if (!context.mounted) {
+                return;
+              }
               ref.read(authControllerProvider.notifier).signOut();
               ref.read(smartJobControllerProvider.notifier).resetForLogout();
               context.go(AppRoute.login);
             },
-            onDeleteAccount: () {
+            onDeleteAccount: () async {
+              await AuthService.signOut();
+              if (!context.mounted) {
+                return;
+              }
               ref.read(authControllerProvider.notifier).signOut();
               ref.read(smartJobControllerProvider.notifier).deleteAccount();
               context.go(AppRoute.login);
@@ -201,6 +260,78 @@ class ProfileScreen extends ConsumerWidget {
                   ],
                 ),
               ).animate().fade(delay: 80.ms),
+              const SizedBox(height: 24),
+              _SectionShell(
+                title: 'Professional Details',
+                subtitle:
+                    'Skills, experience, and education that feed your CV and improve job match scores.',
+                trailing: TextButton.icon(
+                  onPressed: () => context.go(AppRoute.cvSetup),
+                  icon: const Icon(LucideIcons.penTool, size: 16),
+                  label: const Text('Edit in CV builder'),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    _SkillsCluster(
+                      skills: profile.skills,
+                      onAdd: () => _showAddEntrySheet(
+                        context,
+                        ref,
+                        CvCollectionSection.skills,
+                        hint: 'e.g. Flutter, Python, Figma',
+                      ),
+                      onRemove: (index) => ref
+                          .read(smartJobControllerProvider.notifier)
+                          .removeProfileEntry(
+                            section: CvCollectionSection.skills,
+                            index: index,
+                          ),
+                    ),
+                    const SizedBox(height: 16),
+                    _EntryCluster(
+                      title: 'Experience',
+                      icon: LucideIcons.briefcase,
+                      entries: profile.experience,
+                      emptyMessage:
+                          'No experience added yet. Tap + Add to start building your work history.',
+                      onAdd: () => _showAddEntrySheet(
+                        context,
+                        ref,
+                        CvCollectionSection.experience,
+                        hint:
+                            'e.g. Flutter Developer at Acme Corp, 2023 – Present',
+                      ),
+                      onRemove: (index) => ref
+                          .read(smartJobControllerProvider.notifier)
+                          .removeProfileEntry(
+                            section: CvCollectionSection.experience,
+                            index: index,
+                          ),
+                    ),
+                    const SizedBox(height: 16),
+                    _EntryCluster(
+                      title: 'Education',
+                      icon: LucideIcons.graduationCap,
+                      entries: profile.education,
+                      emptyMessage:
+                          'No education entries yet. Tap + Add to add your qualifications.',
+                      onAdd: () => _showAddEntrySheet(
+                        context,
+                        ref,
+                        CvCollectionSection.education,
+                        hint: 'e.g. BSc Computer Science, UAE University, 2026',
+                      ),
+                      onRemove: (index) => ref
+                          .read(smartJobControllerProvider.notifier)
+                          .removeProfileEntry(
+                            section: CvCollectionSection.education,
+                            index: index,
+                          ),
+                    ),
+                  ],
+                ),
+              ).animate().fade(delay: 120.ms),
               const SizedBox(height: 24),
               _SectionShell(
                 title: 'Career Insights',
@@ -441,7 +572,7 @@ class ProfileScreen extends ConsumerWidget {
                   TextField(controller: websiteController, decoration: const InputDecoration(labelText: 'Website')),
                   const SizedBox(height: 18),
                   ElevatedButton(
-                    onPressed: () {
+                    onPressed: () async {
                       ref.read(smartJobControllerProvider.notifier).updateProfileWorkspace(
                             fullName: fullNameController.text.trim(),
                             headline: headlineController.text.trim(),
@@ -453,7 +584,33 @@ class ProfileScreen extends ConsumerWidget {
                             portfolioUrl: portfolioController.text.trim(),
                             websiteUrl: websiteController.text.trim(),
                           );
-                      Navigator.of(context).pop();
+                      try {
+                        await SupabaseDataService.updateProfileWorkspace(
+                          fullName: fullNameController.text.trim(),
+                          headline: headlineController.text.trim(),
+                          phoneNumber: phoneController.text.trim(),
+                          location: locationController.text.trim(),
+                          linkedInUrl: linkedInController.text.trim(),
+                          portfolioUrl: portfolioController.text.trim(),
+                          websiteUrl: websiteController.text.trim(),
+                        );
+                        if (mounted) {
+                          setState(() {
+                            _remoteProfile = ref.read(smartJobControllerProvider).profile;
+                            _error = null;
+                          });
+                        }
+                      } catch (error) {
+                        if (!context.mounted) {
+                          return;
+                        }
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(content: Text('Error: $error')),
+                        );
+                      }
+                      if (context.mounted) {
+                        Navigator.of(context).pop();
+                      }
                     },
                     child: const Text('Save workspace profile'),
                   ),
@@ -593,7 +750,7 @@ class ProfileScreen extends ConsumerWidget {
                       SwitchListTile.adaptive(value: emailEnabled, contentPadding: EdgeInsets.zero, title: const Text('Email notifications'), onChanged: (value) => setModalState(() => emailEnabled = value)),
                       const SizedBox(height: 18),
                       ElevatedButton(
-                        onPressed: () {
+                        onPressed: () async {
                           final salary = salaryExpectation.round();
                           ref.read(smartJobControllerProvider.notifier).updateJobPreferences(
                                 targetRoles: roleController.text.split(',').map((item) => item.trim()).where((item) => item.isNotEmpty).toList(),
@@ -609,7 +766,33 @@ class ProfileScreen extends ConsumerWidget {
                                 pushNotificationsEnabled: pushEnabled,
                                 emailNotificationsEnabled: emailEnabled,
                               );
-                          Navigator.of(context).pop();
+                          try {
+                            await SupabaseDataService.updateJobPreferences(
+                              targetRoles: roleController.text.split(',').map((item) => item.trim()).where((item) => item.isNotEmpty).toList(),
+                              preferredJobTypes: selectedJobTypes.toList(),
+                              preferredWorkModes: selectedWorkModes.toList(),
+                              preferredLocations: locationsController.text.split(',').map((item) => item.trim()).where((item) => item.isNotEmpty).toList(),
+                              emailFrequency: alertFrequency,
+                              pushNotificationsEnabled: pushEnabled,
+                              emailNotificationsEnabled: emailEnabled,
+                            );
+                            if (mounted) {
+                              setState(() {
+                                _remoteProfile = ref.read(smartJobControllerProvider).profile;
+                                _error = null;
+                              });
+                            }
+                          } catch (error) {
+                            if (!context.mounted) {
+                              return;
+                            }
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              SnackBar(content: Text('Error: $error')),
+                            );
+                          }
+                          if (context.mounted) {
+                            Navigator.of(context).pop();
+                          }
                         },
                         child: const Text('Save job preferences'),
                       ),
@@ -624,8 +807,251 @@ class ProfileScreen extends ConsumerWidget {
     );
   }
 
+  Future<void> _showAddEntrySheet(
+    BuildContext context,
+    WidgetRef ref,
+    CvCollectionSection section, {
+    String hint = '',
+  }) async {
+    final controller = TextEditingController();
+    final isSkill = section == CvCollectionSection.skills;
+
+    await showModalBottomSheet<void>(
+      context: context,
+      useRootNavigator: true,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (ctx) {
+        return Padding(
+          padding: EdgeInsets.fromLTRB(
+            16,
+            16,
+            16,
+            MediaQuery.viewInsetsOf(ctx).bottom + 16,
+          ),
+          child: SmartJobPanel(
+            radius: 24,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                SmartJobSectionHeader(
+                  title: 'Add ${section.label}',
+                  subtitle: 'Type the entry and tap Add to save it to your profile.',
+                ),
+                const SizedBox(height: 18),
+                TextField(
+                  controller: controller,
+                  autofocus: true,
+                  maxLines: isSkill ? 1 : 3,
+                  decoration: InputDecoration(
+                    labelText: hint.isEmpty ? section.label : hint,
+                  ),
+                ),
+                const SizedBox(height: 18),
+                Row(
+                  children: [
+                    Expanded(
+                      child: OutlinedButton(
+                        onPressed: () => Navigator.of(ctx).pop(),
+                        child: const Text('Cancel'),
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: ElevatedButton(
+                        onPressed: () {
+                          final value = controller.text.trim();
+                          if (value.isNotEmpty) {
+                            ref
+                                .read(smartJobControllerProvider.notifier)
+                                .addProfileEntry(section, value);
+                          }
+                          Navigator.of(ctx).pop();
+                        },
+                        child: const Text('Add'),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+    controller.dispose();
+  }
+
   void _showMessage(BuildContext context, String message) {
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────
+// Professional Details widgets
+// ─────────────────────────────────────────────────────────────────
+
+class _SkillsCluster extends StatelessWidget {
+  const _SkillsCluster({
+    required this.skills,
+    required this.onAdd,
+    required this.onRemove,
+  });
+
+  final List<String> skills;
+  final VoidCallback onAdd;
+  final ValueChanged<int> onRemove;
+
+  @override
+  Widget build(BuildContext context) {
+    final brightness = Theme.of(context).brightness;
+
+    return _PreferenceCluster(
+      title: 'Skills',
+      subtitle: 'Technical and soft skills that appear on your CV and power match scoring.',
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          if (skills.isEmpty)
+            Text(
+              'No skills added yet. Tap + Add skill to get started.',
+              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    color: AppColors.subtext(brightness),
+                  ),
+            )
+          else
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                for (var i = 0; i < skills.length; i++)
+                  Chip(
+                    label: Text(skills[i]),
+                    deleteIcon: const Icon(Icons.close_rounded, size: 14),
+                    onDeleted: () => onRemove(i),
+                    visualDensity: VisualDensity.compact,
+                  ),
+              ],
+            ),
+          const SizedBox(height: 14),
+          OutlinedButton.icon(
+            onPressed: onAdd,
+            icon: const Icon(LucideIcons.plus, size: 14),
+            label: const Text('Add skill'),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _EntryCluster extends StatelessWidget {
+  const _EntryCluster({
+    required this.title,
+    required this.icon,
+    required this.entries,
+    required this.emptyMessage,
+    required this.onAdd,
+    required this.onRemove,
+  });
+
+  final String title;
+  final IconData icon;
+  final List<String> entries;
+  final String emptyMessage;
+  final VoidCallback onAdd;
+  final ValueChanged<int> onRemove;
+
+  @override
+  Widget build(BuildContext context) {
+    final brightness = Theme.of(context).brightness;
+
+    return _PreferenceCluster(
+      title: title,
+      subtitle: 'Used in your live CV and for ATS keyword matching.',
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          if (entries.isEmpty)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 4),
+              child: Text(
+                emptyMessage,
+                style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                      color: AppColors.subtext(brightness),
+                    ),
+              ),
+            )
+          else
+            for (var i = 0; i < entries.length; i++) ...[
+              _ProfileEntryRow(
+                text: entries[i],
+                icon: icon,
+                onDelete: () => onRemove(i),
+              ),
+              if (i < entries.length - 1)
+                Divider(
+                  height: 1,
+                  color: AppColors.stroke(brightness),
+                ),
+            ],
+          const SizedBox(height: 14),
+          OutlinedButton.icon(
+            onPressed: onAdd,
+            icon: const Icon(LucideIcons.plus, size: 14),
+            label: Text('Add $title'),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ProfileEntryRow extends StatelessWidget {
+  const _ProfileEntryRow({
+    required this.text,
+    required this.icon,
+    required this.onDelete,
+  });
+
+  final String text;
+  final IconData icon;
+  final VoidCallback onDelete;
+
+  @override
+  Widget build(BuildContext context) {
+    final brightness = Theme.of(context).brightness;
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 10),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(icon, size: 14, color: AppColors.teal),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              text,
+              style: Theme.of(context).textTheme.bodyMedium,
+            ),
+          ),
+          const SizedBox(width: 8),
+          InkWell(
+            onTap: onDelete,
+            borderRadius: BorderRadius.circular(999),
+            child: Padding(
+              padding: const EdgeInsets.all(4),
+              child: Icon(
+                LucideIcons.trash2,
+                size: 14,
+                color: AppColors.subtext(brightness),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
   }
 }
 

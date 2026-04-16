@@ -8,6 +8,7 @@ import '../../domain/models/application.dart';
 import '../../domain/models/job.dart';
 import '../../domain/models/message.dart';
 import '../../domain/models/profile.dart';
+import '../../services/supabase_data_service.dart';
 
 
 class SmartJobState {
@@ -107,6 +108,65 @@ class SmartJobController extends Notifier<SmartJobState> {
       themeMode: state.profile.themeMode,
     );
     state = _buildStateForAccount(account);
+    // Hydrate from Supabase in the background — local state is already usable.
+    _refreshFromSupabase();
+  }
+
+  /// Pulls fresh data from Supabase and merges it into local state without
+  /// blocking the UI. Each section is independent so a partial failure is fine.
+  Future<void> _refreshFromSupabase() async {
+    // ── Jobs ──────────────────────────────────────────────────────────────
+    try {
+      final remoteJobs = await SupabaseDataService.fetchJobs();
+      if (remoteJobs.isNotEmpty) {
+        final localById = {for (final j in state.jobs) j.id: j};
+        final merged = remoteJobs.map((remote) {
+          final local = localById[remote.id];
+          if (local == null) return remote;
+          // Preserve the user's local interaction state.
+          return remote.copyWith(isSaved: local.isSaved, feedback: local.feedback);
+        }).toList();
+        _persistAccount(jobs: merged);
+      }
+    } catch (_) {}
+
+    // ── Applications ──────────────────────────────────────────────────────
+    try {
+      final remoteApps = await SupabaseDataService.fetchApplications();
+      // Keep local-only apps (mock/easy-apply) that aren't in Supabase yet.
+      final remoteIds = remoteApps.map((a) => a.id).toSet();
+      final localOnly = state.applications.where((a) => !remoteIds.contains(a.id)).toList();
+      final merged = [...remoteApps, ...localOnly];
+      if (merged.isNotEmpty) {
+        _persistAccount(applications: merged);
+      }
+    } catch (_) {}
+
+    // ── Inbox messages ────────────────────────────────────────────────────
+    try {
+      final remoteMessages = await SupabaseDataService.fetchInboxMessages();
+      if (remoteMessages.isNotEmpty) {
+        final remoteIds = remoteMessages.map((m) => m.id).toSet();
+        final localOnly = state.messages.where((m) => !remoteIds.contains(m.id)).toList();
+        _persistAccount(messages: [...remoteMessages, ...localOnly]);
+      }
+    } catch (_) {}
+
+    // ── Profile (CV scores, cv_url, etc.) ─────────────────────────────────
+    try {
+      final remoteProfile = await SupabaseDataService.fetchProfile(state.profile);
+      if (remoteProfile != null) {
+        // Never roll back onboarding/CV flags the user already earned locally.
+        final safe = remoteProfile.copyWith(
+          hasCompletedOnboarding:
+              state.profile.hasCompletedOnboarding || remoteProfile.hasCompletedOnboarding,
+          hasUploadedCv:
+              state.profile.hasUploadedCv || remoteProfile.hasUploadedCv,
+          themeMode: state.profile.themeMode,
+        );
+        _updateProfile((_) => safe, autosaveLabel: safe.cvInsight.lastUpdatedLabel);
+      }
+    } catch (_) {}
   }
 
   void setSearchQuery(String value) {

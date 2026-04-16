@@ -5,6 +5,7 @@ import 'package:lucide_icons/lucide_icons.dart';
 
 import '../../application/controllers/smart_job_controller.dart';
 import '../../domain/models/job.dart';
+import '../../services/supabase_data_service.dart';
 import '../../theme/app_colors.dart';
 import '../shared/widgets/smart_job_ui.dart';
 import 'job_details_screen.dart';
@@ -195,8 +196,7 @@ class HomeScreen extends ConsumerWidget {
                 job: job,
                 onOpenDetails: () => _openJobDetails(context, job.id),
                 onApply: () => _applyForJob(context, ref, job),
-                onSaveToggle: () =>
-                    ref.read(smartJobControllerProvider.notifier).toggleSaveJob(job.id),
+                onSaveToggle: () => _toggleSaveJob(context, ref, job),
                 onSwipeSave: () => _saveFromSwipe(context, ref, job),
                 onSwipeDismiss: () => _markNotInterested(context, ref, job),
               ).animate().fade(delay: 160.ms).slideY(begin: 0.03),
@@ -221,13 +221,39 @@ class HomeScreen extends ConsumerWidget {
     ];
   }
 
-  void _applyForJob(BuildContext context, WidgetRef ref, Job job) {
-    ref.read(smartJobControllerProvider.notifier).easyApply(job);
-    _showToast(context, 'Application sent to ${job.companyName}.');
+  Future<void> _applyForJob(BuildContext context, WidgetRef ref, Job job) async {
+    try {
+      final created = await SupabaseDataService.applyToJob(job);
+      if (!context.mounted) {
+        return;
+      }
+      ref.read(smartJobControllerProvider.notifier).easyApply(job);
+      _showToast(
+        context,
+        created
+            ? 'Application sent to ${job.companyName}.'
+            : 'You already applied to ${job.companyName}.',
+      );
+    } catch (error) {
+      _showToast(context, 'Could not send application: $error');
+    }
+  }
+
+  void _toggleSaveJob(BuildContext context, WidgetRef ref, Job job) {
+    final nextSaved = !job.isSaved;
+    ref.read(smartJobControllerProvider.notifier).toggleSaveJob(job.id);
+    SupabaseDataService.saveJobInteraction(
+      job.copyWith(isSaved: nextSaved),
+      nextSaved ? 'saved' : 'viewed',
+    );
   }
 
   void _saveFromSwipe(BuildContext context, WidgetRef ref, Job job) {
     ref.read(smartJobControllerProvider.notifier).setJobSaved(job.id, true);
+    SupabaseDataService.saveJobInteraction(
+      job.copyWith(isSaved: true),
+      'saved',
+    );
     _showToast(context, '${job.title} saved to your list.');
   }
 
@@ -235,6 +261,10 @@ class HomeScreen extends ConsumerWidget {
     ref
         .read(smartJobControllerProvider.notifier)
         .setJobFeedback(job.id, JobFeedback.notInterested);
+    SupabaseDataService.saveJobInteraction(
+      job.copyWith(feedback: JobFeedback.notInterested),
+      'not_interested',
+    );
     _showToast(context, 'We will show fewer roles like ${job.title}.');
   }
 
@@ -512,6 +542,3 @@ class _ActiveFilterChip extends StatelessWidget {
     );
   }
 }
-
-
-

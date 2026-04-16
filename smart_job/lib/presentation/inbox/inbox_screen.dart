@@ -1,10 +1,14 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_animate/flutter_animate.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:lucide_icons/lucide_icons.dart';
 
 import '../../application/controllers/smart_job_controller.dart';
 import '../../domain/models/message.dart';
+import '../../services/supabase_data_service.dart';
 import '../../theme/app_colors.dart';
 import '../shared/widgets/smart_job_ui.dart';
 
@@ -17,278 +21,766 @@ class InboxScreen extends ConsumerStatefulWidget {
 
 class _InboxScreenState extends ConsumerState<InboxScreen> {
   String? _selectedMessageId;
+  bool _isLoading = true;
+  String? _error;
+  List<InboxMessage> _messages = const [];
+  bool _aliasCopied = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadMessages();
+  }
+
+  Future<void> _loadMessages() async {
+    try {
+      final remoteMessages = await SupabaseDataService.fetchInboxMessages();
+      if (!mounted) return;
+      final localMessages = ref.read(smartJobControllerProvider).messages;
+      final remoteIds = remoteMessages.map((m) => m.id).toSet();
+      final localOnly = localMessages.where((m) => !remoteIds.contains(m.id)).toList();
+      setState(() {
+        _messages = [...remoteMessages, ...localOnly];
+        _error = null;
+        _isLoading = false;
+      });
+    } catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _error = error.toString();
+        _messages = ref.read(smartJobControllerProvider).messages;
+        _isLoading = false;
+      });
+    }
+  }
+
+  Future<void> _copyAlias(String alias) async {
+    await Clipboard.setData(ClipboardData(text: alias));
+    if (!mounted) return;
+    setState(() => _aliasCopied = true);
+    Future.delayed(const Duration(seconds: 2), () {
+      if (mounted) setState(() => _aliasCopied = false);
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
     final state = ref.watch(smartJobControllerProvider);
-    final messages = ref.watch(inboxMessagesProvider);
-    final unreadCount = state.messages.where((message) => message.isUnread).length;
+    final sourceMessages =
+        _messages.isNotEmpty || (_error == null && !_isLoading)
+            ? _messages
+            : state.messages;
+    final messages = _applyFilter(sourceMessages, state.selectedInboxFilter);
+    final unreadCount =
+        sourceMessages.where((message) => message.isUnread).length;
+    final alias = state.profile.smartInboxAlias;
+
+    if (_isLoading && sourceMessages.isEmpty) {
+      return const Center(child: CircularProgressIndicator());
+    }
 
     final selectedMessage = messages.isNotEmpty
         ? messages.firstWhere(
-            (message) => message.id == (_selectedMessageId ?? messages.first.id),
+            (m) => m.id == (_selectedMessageId ?? messages.first.id),
             orElse: () => messages.first,
           )
         : null;
 
     return SmartJobScrollPage(
+      scrollViewKey: const PageStorageKey('inbox-scroll-v2'),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          SmartJobPanel(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
+          // ─── Identity Card ─────────────────────────────────────
+          _IdentityCard(
+            alias: alias,
+            unreadCount: unreadCount,
+            totalMessages: sourceMessages.length,
+            isCopied: _aliasCopied,
+            onCopy: () => _copyAlias(alias),
+          ).animate().fade().slideY(begin: 0.04),
+
+          const SizedBox(height: 20),
+
+          // ─── Filter chips ───────────────────────────────────────
+          SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: Row(
               children: [
-                const SmartJobHeroLabel(label: 'Recruiter inbox'),
-                const SizedBox(height: 14),
-                Text(
-                  'A focused mail hub for every hiring update.',
-                  style: Theme.of(context).textTheme.displayMedium,
+                _InboxFilterChip(
+                  label: 'All',
+                  count: sourceMessages.length,
+                  selected: state.selectedInboxFilter == MessageFilter.all,
+                  onTap: () => ref
+                      .read(smartJobControllerProvider.notifier)
+                      .setInboxFilter(MessageFilter.all),
                 ),
-                const SizedBox(height: 10),
-                Text(
-                  'Your SmartJob identity keeps interview invites, rejection letters, and follow-ups aligned with application history.',
-                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                        color: AppColors.subtext(Theme.of(context).brightness),
-                      ),
+                const SizedBox(width: 8),
+                _InboxFilterChip(
+                  label: 'Unread',
+                  count: unreadCount,
+                  selected: state.selectedInboxFilter == MessageFilter.unread,
+                  onTap: () => ref
+                      .read(smartJobControllerProvider.notifier)
+                      .setInboxFilter(MessageFilter.unread),
+                  highlightColor: AppColors.coral,
                 ),
-                const SizedBox(height: 16),
-                Wrap(
-                  spacing: 10,
-                  runSpacing: 10,
-                  children: [
-                    SmartJobMetricPill(
-                      label: 'identity',
-                      value: state.profile.smartInboxAlias,
-                      icon: LucideIcons.atSign,
-                    ),
-                    SmartJobMetricPill(
-                      label: 'unread',
-                      value: '$unreadCount',
-                      icon: LucideIcons.mailOpen,
-                    ),
-                  ],
+                const SizedBox(width: 8),
+                _InboxFilterChip(
+                  label: 'Interviews',
+                  count: sourceMessages
+                      .where((m) => m.type == MessageType.interview)
+                      .length,
+                  selected:
+                      state.selectedInboxFilter == MessageFilter.interviews,
+                  onTap: () => ref
+                      .read(smartJobControllerProvider.notifier)
+                      .setInboxFilter(MessageFilter.interviews),
+                  highlightColor: AppColors.info,
+                ),
+                const SizedBox(width: 8),
+                _InboxFilterChip(
+                  label: 'Important',
+                  count:
+                      sourceMessages.where((m) => m.isImportant).length,
+                  selected:
+                      state.selectedInboxFilter == MessageFilter.important,
+                  onTap: () => ref
+                      .read(smartJobControllerProvider.notifier)
+                      .setInboxFilter(MessageFilter.important),
+                  highlightColor: AppColors.sand,
                 ),
               ],
             ),
-          ).animate().fade().slideY(begin: 0.04),
-          const SizedBox(height: 18),
-          const SmartJobSectionHeader(
-            title: 'Filters',
-            subtitle: 'Switch between all updates, unread messages, and interview-heavy traffic.',
+          ).animate().fade(delay: 80.ms),
+
+          const SizedBox(height: 20),
+
+          // ─── Message preview pane ───────────────────────────────
+          if (selectedMessage != null && messages.isNotEmpty)
+            _MessageDetailCard(message: selectedMessage)
+                .animate()
+                .fade(delay: 100.ms),
+
+          if (selectedMessage != null && messages.isNotEmpty)
+            const SizedBox(height: 20),
+
+          // ─── Message list ───────────────────────────────────────
+          SmartJobSectionHeader(
+            title: 'Messages',
+            subtitle: messages.isEmpty
+                ? 'No messages in this filter.'
+                : '${messages.length} ${messages.length == 1 ? 'message' : 'messages'}${unreadCount > 0 ? ' · $unreadCount unread' : ''}',
           ),
-          const SizedBox(height: 12),
+          const SizedBox(height: 14),
+          if (messages.isEmpty)
+            SmartJobEmptyState(
+              icon: LucideIcons.mailX,
+              title: 'No messages here',
+              message:
+                  'Apply to roles and share your SmartJob email with companies. Recruiter replies will appear here.',
+            )
+          else
+            for (final message in messages) ...[
+              _MessageTile(
+                message: message,
+                isSelected: message.id ==
+                    (_selectedMessageId ?? messages.first.id),
+                onTap: () {
+                  setState(() {
+                    _selectedMessageId = message.id;
+                    _messages = [
+                      for (final m in sourceMessages)
+                        if (m.id == message.id)
+                          m.copyWith(isUnread: false)
+                        else
+                          m,
+                    ];
+                  });
+                  ref
+                      .read(smartJobControllerProvider.notifier)
+                      .markMessageRead(message.id);
+                  unawaited(SupabaseDataService.markMessageRead(message.id));
+                },
+              ).animate().fade(delay: 120.ms).slideY(begin: 0.02),
+              const SizedBox(height: 10),
+            ],
+        ],
+      ),
+    );
+  }
+
+  List<InboxMessage> _applyFilter(
+    List<InboxMessage> messages,
+    MessageFilter filter,
+  ) {
+    switch (filter) {
+      case MessageFilter.all:
+        return messages;
+      case MessageFilter.important:
+        return messages.where((m) => m.isImportant).toList();
+      case MessageFilter.unread:
+        return messages.where((m) => m.isUnread).toList();
+      case MessageFilter.interviews:
+        return messages.where((m) => m.type == MessageType.interview).toList();
+    }
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────
+// Identity Card
+// ─────────────────────────────────────────────────────────────────
+
+class _IdentityCard extends StatelessWidget {
+  const _IdentityCard({
+    required this.alias,
+    required this.unreadCount,
+    required this.totalMessages,
+    required this.isCopied,
+    required this.onCopy,
+  });
+
+  final String alias;
+  final int unreadCount;
+  final int totalMessages;
+  final bool isCopied;
+  final VoidCallback onCopy;
+
+  @override
+  Widget build(BuildContext context) {
+    final brightness = Theme.of(context).brightness;
+
+    return SmartJobPanel(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Recruiter Inbox',
+                      style: Theme.of(context).textTheme.displayMedium,
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      'A dedicated address for every company you engage with — completely separate from your personal email.',
+                      style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                            color: AppColors.subtext(brightness),
+                          ),
+                    ),
+                  ],
+                ),
+              ),
+              Container(
+                padding: const EdgeInsets.all(14),
+                decoration: BoxDecoration(
+                  gradient: const LinearGradient(
+                    colors: [AppColors.midnight, AppColors.teal],
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                  ),
+                  borderRadius: BorderRadius.circular(18),
+                ),
+                child: const Icon(
+                  LucideIcons.mailCheck,
+                  color: Colors.white,
+                  size: 22,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 20),
+
+          // Email identity block
+          Container(
+            padding: const EdgeInsets.all(18),
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                colors: [
+                  AppColors.midnight.withValues(alpha: 0.08),
+                  AppColors.teal.withValues(alpha: 0.06),
+                ],
+                begin: Alignment.centerLeft,
+                end: Alignment.centerRight,
+              ),
+              borderRadius: BorderRadius.circular(20),
+              border: Border.all(
+                color: AppColors.midnight.withValues(alpha: 0.18),
+              ),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    const Icon(
+                      LucideIcons.atSign,
+                      size: 16,
+                      color: AppColors.teal,
+                    ),
+                    const SizedBox(width: 8),
+                    Text(
+                      'Your SmartJob email identity',
+                      style: Theme.of(context).textTheme.labelLarge?.copyWith(
+                            color: AppColors.teal,
+                            fontWeight: FontWeight.w700,
+                          ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 12),
+                Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        alias.isEmpty ? 'No alias set yet' : alias,
+                        style: Theme.of(context).textTheme.headlineMedium?.copyWith(
+                              fontWeight: FontWeight.w700,
+                              color: alias.isEmpty
+                                  ? AppColors.subtext(brightness)
+                                  : AppColors.text(brightness),
+                            ),
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    if (alias.isNotEmpty)
+                      AnimatedSwitcher(
+                        duration: const Duration(milliseconds: 200),
+                        child: isCopied
+                            ? Container(
+                                key: const ValueKey('copied'),
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 14,
+                                  vertical: 10,
+                                ),
+                                decoration: BoxDecoration(
+                                  color: AppColors.success.withValues(alpha: 0.14),
+                                  borderRadius: BorderRadius.circular(12),
+                                  border: Border.all(
+                                    color: AppColors.success.withValues(alpha: 0.3),
+                                  ),
+                                ),
+                                child: Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    const Icon(
+                                      LucideIcons.check,
+                                      size: 14,
+                                      color: AppColors.success,
+                                    ),
+                                    const SizedBox(width: 6),
+                                    Text(
+                                      'Copied',
+                                      style: Theme.of(context)
+                                          .textTheme
+                                          .labelLarge
+                                          ?.copyWith(color: AppColors.success),
+                                    ),
+                                  ],
+                                ),
+                              )
+                            : OutlinedButton.icon(
+                                key: const ValueKey('copy'),
+                                onPressed: onCopy,
+                                icon: const Icon(LucideIcons.copy, size: 14),
+                                label: const Text('Copy'),
+                              ),
+                      ),
+                  ],
+                ),
+                const SizedBox(height: 14),
+                Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: AppColors.surface(brightness).withValues(alpha: 0.6),
+                    borderRadius: BorderRadius.circular(14),
+                  ),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Icon(
+                        LucideIcons.info,
+                        size: 14,
+                        color: AppColors.teal,
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          'Use this address when applying to jobs instead of your personal email. All replies from recruiters and companies will arrive here, keeping your applications organised and your personal inbox clean.',
+                          style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                                color: AppColors.subtext(brightness),
+                              ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 16),
           Wrap(
             spacing: 10,
             runSpacing: 10,
             children: [
-              _InboxFilterChip(
-                label: 'All',
-                selected: state.selectedInboxFilter == MessageFilter.all,
-                onTap: () => ref
-                    .read(smartJobControllerProvider.notifier)
-                    .setInboxFilter(MessageFilter.all),
+              SmartJobMetricPill(
+                label: 'messages',
+                value: '$totalMessages',
+                icon: LucideIcons.mail,
               ),
-              _InboxFilterChip(
-                label: 'Important',
-                selected: state.selectedInboxFilter == MessageFilter.important,
-                onTap: () => ref
-                    .read(smartJobControllerProvider.notifier)
-                    .setInboxFilter(MessageFilter.important),
-              ),
-              _InboxFilterChip(
-                label: 'Unread',
-                selected: state.selectedInboxFilter == MessageFilter.unread,
-                onTap: () => ref
-                    .read(smartJobControllerProvider.notifier)
-                    .setInboxFilter(MessageFilter.unread),
-              ),
-              _InboxFilterChip(
-                label: 'Interviews',
-                selected: state.selectedInboxFilter == MessageFilter.interviews,
-                onTap: () => ref
-                    .read(smartJobControllerProvider.notifier)
-                    .setInboxFilter(MessageFilter.interviews),
+              SmartJobMetricPill(
+                label: 'unread',
+                value: '$unreadCount',
+                icon: LucideIcons.mailOpen,
               ),
             ],
-          ).animate().fade(delay: 80.ms),
-          const SizedBox(height: 18),
-          if (selectedMessage != null)
-            SmartJobPanel(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      SmartJobAvatar(
-                        label: selectedMessage.senderCompany.substring(0, 2).toUpperCase(),
-                        size: 48,
-                      ),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              selectedMessage.subject,
-                              style: Theme.of(context).textTheme.headlineMedium,
-                            ),
-                            const SizedBox(height: 4),
-                            Text(
-                              '${selectedMessage.senderName} / ${selectedMessage.senderCompany}',
-                              style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                                    color: AppColors.subtext(
-                                      Theme.of(context).brightness,
-                                    ),
-                                  ),
-                            ),
-                          ],
-                        ),
-                      ),
-                      Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-                        decoration: BoxDecoration(
-                          color: messageTypeColor(selectedMessage.type).withValues(alpha: 0.12),
-                          borderRadius: BorderRadius.circular(16),
-                        ),
-                        child: Text(
-                          messageTypeLabel(selectedMessage.type),
-                          style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                                color: messageTypeColor(selectedMessage.type),
-                              ),
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 16),
-                  Text(selectedMessage.body, style: Theme.of(context).textTheme.bodyLarge),
-                ],
-              ),
-            ).animate().fade(delay: 120.ms),
-          const SizedBox(height: 18),
-          const SmartJobSectionHeader(
-            title: 'Messages',
-            subtitle: 'Tap a message to preview it and mark it as read.',
           ),
-          const SizedBox(height: 12),
-          if (messages.isEmpty)
-            const SmartJobEmptyState(
-              icon: LucideIcons.mailX,
-              title: 'No messages in this filter',
-              message: 'Try switching the inbox filter to reveal more recruiter activity.',
-            )
-          else
-            for (final message in messages) ...[
-              GestureDetector(
-                onTap: () {
-                  setState(() => _selectedMessageId = message.id);
-                  ref
-                      .read(smartJobControllerProvider.notifier)
-                      .markMessageRead(message.id);
-                },
-                child: SmartJobPanel(
-                  padding: const EdgeInsets.all(18),
-                  child: Row(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Stack(
-                        clipBehavior: Clip.none,
-                        children: [
-                          SmartJobAvatar(
-                            label: message.senderName.substring(0, 2).toUpperCase(),
-                            size: 48,
-                          ),
-                          if (message.isUnread)
-                            Positioned(
-                              top: -2,
-                              right: -2,
-                              child: Container(
-                                width: 12,
-                                height: 12,
-                                decoration: const BoxDecoration(
-                                  color: AppColors.coral,
-                                  shape: BoxShape.circle,
-                                ),
-                              ),
-                            ),
-                        ],
-                      ),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Row(
-                              children: [
-                                Expanded(
-                                  child: Text(
-                                    message.subject,
-                                    style: Theme.of(context)
-                                        .textTheme
-                                        .headlineMedium
-                                        ?.copyWith(
-                                          fontWeight: message.isUnread
-                                              ? FontWeight.w700
-                                              : FontWeight.w600,
-                                        ),
-                                  ),
-                                ),
-                                const SizedBox(width: 8),
-                                Text(
-                                  message.timeLabel,
-                                  style: Theme.of(context).textTheme.bodySmall,
-                                ),
-                              ],
-                            ),
-                            const SizedBox(height: 4),
-                            Text(
-                              '${message.senderCompany} / ${message.senderName}',
-                              style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                                    color: AppColors.subtext(
-                                      Theme.of(context).brightness,
-                                    ),
-                                  ),
-                            ),
-                            const SizedBox(height: 8),
-                            Text(
-                              message.preview,
-                              maxLines: 2,
-                              overflow: TextOverflow.ellipsis,
-                              style: Theme.of(context).textTheme.bodyMedium,
-                            ),
-                          ],
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-              const SizedBox(height: 12),
-            ],
         ],
       ),
     );
   }
 }
 
-class _InboxFilterChip extends StatelessWidget {
-  const _InboxFilterChip({
-    required this.label,
-    required this.selected,
+// ─────────────────────────────────────────────────────────────────
+// Message Detail Card
+// ─────────────────────────────────────────────────────────────────
+
+class _MessageDetailCard extends StatelessWidget {
+  const _MessageDetailCard({required this.message});
+
+  final InboxMessage message;
+
+  @override
+  Widget build(BuildContext context) {
+    final brightness = Theme.of(context).brightness;
+    final typeColor = messageTypeColor(message.type);
+
+    return SmartJobPanel(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              SmartJobAvatar(
+                label: message.senderCompany.isNotEmpty
+                    ? message.senderCompany.substring(
+                        0,
+                        message.senderCompany.length >= 2 ? 2 : 1,
+                      ).toUpperCase()
+                    : 'SJ',
+                size: 52,
+              ),
+              const SizedBox(width: 14),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      message.subject,
+                      style: Theme.of(context).textTheme.headlineMedium,
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      '${message.senderName} · ${message.senderCompany}',
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                            color: AppColors.subtext(brightness),
+                          ),
+                    ),
+                  ],
+                ),
+              ),
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.end,
+                children: [
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 10,
+                      vertical: 6,
+                    ),
+                    decoration: BoxDecoration(
+                      color: typeColor.withValues(alpha: 0.12),
+                      borderRadius: BorderRadius.circular(999),
+                      border:
+                          Border.all(color: typeColor.withValues(alpha: 0.28)),
+                    ),
+                    child: Text(
+                      messageTypeLabel(message.type),
+                      style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                            color: typeColor,
+                            fontWeight: FontWeight.w700,
+                          ),
+                    ),
+                  ),
+                  const SizedBox(height: 6),
+                  Text(
+                    message.timeLabel,
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                          color: AppColors.subtext(brightness),
+                        ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+          const SizedBox(height: 16),
+          const Divider(height: 1),
+          const SizedBox(height: 16),
+          Text(
+            message.body,
+            style: Theme.of(context).textTheme.bodyMedium,
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────
+// Message Tile
+// ─────────────────────────────────────────────────────────────────
+
+class _MessageTile extends StatelessWidget {
+  const _MessageTile({
+    required this.message,
+    required this.isSelected,
     required this.onTap,
   });
 
-  final String label;
-  final bool selected;
+  final InboxMessage message;
+  final bool isSelected;
   final VoidCallback onTap;
 
   @override
   Widget build(BuildContext context) {
-    return SmartJobFilterChip(
-      label: label,
-      selected: selected,
-      onTap: onTap,
+    final brightness = Theme.of(context).brightness;
+    final typeColor = messageTypeColor(message.type);
+
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(22),
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 180),
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            color: isSelected
+                ? AppColors.midnight.withValues(alpha: 0.06)
+                : AppColors.surface(brightness).withValues(alpha: 0.94),
+            borderRadius: BorderRadius.circular(22),
+            border: Border.all(
+              color: isSelected
+                  ? AppColors.midnight.withValues(alpha: 0.3)
+                  : AppColors.stroke(brightness),
+            ),
+            boxShadow: isSelected
+                ? null
+                : [
+                    BoxShadow(
+                      color: Colors.black.withValues(
+                        alpha: brightness == Brightness.dark ? 0.16 : 0.04,
+                      ),
+                      blurRadius: 14,
+                      offset: const Offset(0, 6),
+                    ),
+                  ],
+          ),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Stack(
+                clipBehavior: Clip.none,
+                children: [
+                  SmartJobAvatar(
+                    label: message.senderName.isNotEmpty
+                        ? message.senderName
+                            .substring(
+                              0,
+                              message.senderName.length >= 2 ? 2 : 1,
+                            )
+                            .toUpperCase()
+                        : 'SJ',
+                    size: 46,
+                  ),
+                  if (message.isUnread)
+                    Positioned(
+                      top: -3,
+                      right: -3,
+                      child: Container(
+                        width: 12,
+                        height: 12,
+                        decoration: const BoxDecoration(
+                          color: AppColors.coral,
+                          shape: BoxShape.circle,
+                        ),
+                      ),
+                    ),
+                ],
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            message.subject,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style:
+                                Theme.of(context).textTheme.bodyLarge?.copyWith(
+                                      fontWeight: message.isUnread
+                                          ? FontWeight.w700
+                                          : FontWeight.w500,
+                                    ),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        Text(
+                          message.timeLabel,
+                          style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                                color: AppColors.subtext(brightness),
+                              ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 3),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            '${message.senderCompany} · ${message.senderName}',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                                  color: AppColors.teal,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                          ),
+                        ),
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 8,
+                            vertical: 3,
+                          ),
+                          decoration: BoxDecoration(
+                            color: typeColor.withValues(alpha: 0.10),
+                            borderRadius: BorderRadius.circular(999),
+                          ),
+                          child: Text(
+                            messageTypeLabel(message.type),
+                            style: Theme.of(context)
+                                .textTheme
+                                .labelSmall
+                                ?.copyWith(
+                                  color: typeColor,
+                                  fontWeight: FontWeight.w700,
+                                ),
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 6),
+                    Text(
+                      message.preview,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                            color: AppColors.subtext(brightness),
+                          ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────
+// Filter Chip
+// ─────────────────────────────────────────────────────────────────
+
+class _InboxFilterChip extends StatelessWidget {
+  const _InboxFilterChip({
+    required this.label,
+    required this.count,
+    required this.selected,
+    required this.onTap,
+    this.highlightColor,
+  });
+
+  final String label;
+  final int count;
+  final bool selected;
+  final VoidCallback onTap;
+  final Color? highlightColor;
+
+  @override
+  Widget build(BuildContext context) {
+    final brightness = Theme.of(context).brightness;
+    final activeColor = highlightColor ?? AppColors.midnight;
+
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(999),
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 180),
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+          decoration: BoxDecoration(
+            color: selected ? activeColor : AppColors.surface(brightness),
+            borderRadius: BorderRadius.circular(999),
+            border: Border.all(
+              color: selected ? activeColor : AppColors.stroke(brightness),
+            ),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                label,
+                style: Theme.of(context).textTheme.labelLarge?.copyWith(
+                      color: selected
+                          ? Colors.white
+                          : AppColors.text(brightness),
+                      fontWeight: FontWeight.w600,
+                    ),
+              ),
+              const SizedBox(width: 8),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+                decoration: BoxDecoration(
+                  color: selected
+                      ? Colors.white.withValues(alpha: 0.22)
+                      : AppColors.surfaceMuted(brightness),
+                  borderRadius: BorderRadius.circular(999),
+                ),
+                child: Text(
+                  '$count',
+                  style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                        color: selected
+                            ? Colors.white
+                            : AppColors.subtext(brightness),
+                        fontWeight: FontWeight.w700,
+                      ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
     );
   }
 }

@@ -68,8 +68,6 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.center,
                     children: [
-                      const SmartJobHeroLabel(label: 'One-time CV setup'),
-                      const SizedBox(height: 24),
                       Text(
                         'Upload your CV or start with the builder.',
                         textAlign: TextAlign.center,
@@ -476,11 +474,11 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
   }
 
   void _finishBuilderFlow() {
-    ref.read(smartJobControllerProvider.notifier).beginBuilderSetup(
+    ref.read(smartJobControllerProvider.notifier).completeOnboardingForBuilder(
           targetRoles: _selectedRoles,
           preferredLocations: _selectedLocations,
         );
-    context.go(AppRoute.cvSetup);
+    context.go(AppRoute.main);
   }
 
   void _showMessage(String message) {

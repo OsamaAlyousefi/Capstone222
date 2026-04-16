@@ -8,12 +8,13 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:syncfusion_flutter_pdfviewer/pdfviewer.dart';
 
 import '../../application/controllers/smart_job_controller.dart';
-import '../../data/remote/smart_job_remote_sync.dart';
 import '../../domain/models/profile.dart';
 import '../../router/app_router.dart';
+import '../../services/supabase_data_service.dart';
 import '../../theme/app_colors.dart';
 import '../shared/widgets/smart_job_ui.dart';
 
@@ -28,11 +29,24 @@ class _CVScreenState extends ConsumerState<CVScreen> {
   final PdfViewerController _pdfController = PdfViewerController();
 
   double _zoom = 1.0;
+  bool _isLoadingCv = true;
   bool _isUploadingCv = false;
   bool _isExportingPdf = false;
   bool _isExportingWord = false;
+  String? _cvUrl;
+  String? _cvLoadError;
   double? _uploadProgress;
   String _uploadStageLabel = 'Preparing upload...';
+  // Downloaded bytes are used for SfPdfViewer.memory() which is more
+  // reliable than SfPdfViewer.network() on Android (avoids platform-view
+  // paint-over issues with the loading skeleton).
+  Uint8List? _downloadedCvBytes;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadCvUrl();
+  }
 
   @override
   void dispose() {
@@ -52,7 +66,6 @@ class _CVScreenState extends ConsumerState<CVScreen> {
     final averageScore =
         ((cv.completionScore + cv.atsScore + cv.keywordMatchScore) / 3).round();
     final healthStatus = _healthStatusFor(averageScore);
-    final remoteSync = ref.watch(smartJobRemoteSyncProvider);
 
     return SmartJobScrollPage(
       maxWidth: 1320,
@@ -107,16 +120,13 @@ class _CVScreenState extends ConsumerState<CVScreen> {
                       pdfBytes,
                       cv.fileName,
                     ),
-            onUpload: _isUploadingCv
-                ? null
-                : () => _pickAndConnectCv(profile, remoteSync),
+            onUpload: _isUploadingCv ? null : uploadCV,
             isUploading: _isUploadingCv,
             child: _buildPreviewBody(
               context,
               profile: profile,
               cv: cv,
               pdfBytes: pdfBytes,
-              remoteSync: remoteSync,
             ),
           ),
           const SizedBox(height: 24),
@@ -161,12 +171,90 @@ class _CVScreenState extends ConsumerState<CVScreen> {
     _pdfController.zoomLevel = value;
   }
 
+  Future<void> _loadCvUrl() async {
+    try {
+      final cvUrl = await SupabaseDataService.fetchCvUrl();
+      if (!mounted) return;
+
+      setState(() {
+        _cvUrl = cvUrl;
+        _cvLoadError = null;
+      });
+
+      // Try to download the actual bytes so we can use SfPdfViewer.memory(),
+      // which is more reliable on Android than SfPdfViewer.network().
+      if (cvUrl != null) {
+        await _downloadCvBytes();
+      } else {
+        setState(() => _isLoadingCv = false);
+      }
+    } catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _cvLoadError = 'Could not load your saved CV.';
+        _isLoadingCv = false;
+      });
+    }
+  }
+
+  /// Extracts the Supabase Storage object path from the public CV URL.
+  /// e.g. "https://xxx.supabase.co/storage/v1/object/public/cvs/uid/file.pdf"
+  ///       → "uid/file.pdf"
+  String _storagePathFromUrl(String url) {
+    const marker = '/storage/v1/object/public/cvs/';
+    final idx = url.indexOf(marker);
+    if (idx == -1) return '';
+    return Uri.decodeFull(url.substring(idx + marker.length));
+  }
+
+  Future<void> _downloadCvBytes() async {
+    if (_cvUrl == null) {
+      setState(() => _isLoadingCv = false);
+      return;
+    }
+
+    try {
+      // Derive the path directly from the URL — this is always correct,
+      // regardless of how the file was originally uploaded.
+      final storagePath = _storagePathFromUrl(_cvUrl!);
+
+      if (storagePath.isEmpty) {
+        setState(() => _isLoadingCv = false);
+        return;
+      }
+
+      final raw = await Supabase.instance.client.storage
+          .from('cvs')
+          .download(storagePath);
+
+      if (!mounted) return;
+
+      if (raw.isNotEmpty) {
+        final bytes = Uint8List.fromList(raw);
+        setState(() {
+          _downloadedCvBytes = bytes;
+          _isLoadingCv = false;
+        });
+        // Cache locally so the controller has the bytes for export / ATS.
+        ref.read(smartJobControllerProvider.notifier).connectUploadedCv(
+              fileName: storagePath.split('/').last,
+              remoteStoragePath: storagePath,
+              uploadedCvBase64: base64Encode(bytes),
+              uploadedCvMimeType: 'application/pdf',
+            );
+      } else {
+        setState(() => _isLoadingCv = false);
+      }
+    } catch (_) {
+      if (mounted) setState(() => _isLoadingCv = false);
+    }
+  }
+
   Widget _buildPreviewBody(
     BuildContext context, {
     required UserProfile profile,
     required CvInsight cv,
     required Uint8List? pdfBytes,
-    required SmartJobRemoteSync? remoteSync,
   }) {
     if (_isUploadingCv) {
       return _PreviewLoadingState(
@@ -176,36 +264,45 @@ class _CVScreenState extends ConsumerState<CVScreen> {
       );
     }
 
-    if (!profile.hasUploadedCv) {
+    // Prefer freshly downloaded bytes, then locally-stored base64 bytes.
+    final displayBytes = _downloadedCvBytes ?? pdfBytes;
+
+    if (_isLoadingCv && displayBytes == null) {
+      return const _PdfPreviewScaffold(
+        child: Center(child: CircularProgressIndicator()),
+      );
+    }
+
+    if (_cvUrl == null && displayBytes == null && !profile.hasUploadedCv) {
       return _UploadEmptyState(
-        onUpload: () => _pickAndConnectCv(profile, remoteSync),
+        onUpload: uploadCV,
         onBuildInstead: () => context.go(AppRoute.cvSetup),
       );
     }
 
-    if (cv.uploadedCvMimeType == 'application/pdf' &&
-        cv.remoteStoragePath.isNotEmpty &&
-        remoteSync != null) {
-      return _RemotePdfPreview(
+    // Use memory-based viewer whenever bytes are available — it renders
+    // reliably on Android without the dark platform-view painting issue.
+    if (displayBytes != null) {
+      return _EmbeddedPdfPreview(
         controller: _pdfController,
-        remoteSync: remoteSync,
-        storagePath: cv.remoteStoragePath,
-        fallbackBytes: pdfBytes,
+        bytes: displayBytes,
       );
     }
 
-    if (pdfBytes != null) {
-      return _EmbeddedPdfPreview(
+    // Fallback to network viewer only if bytes could not be downloaded.
+    if (_cvUrl != null) {
+      return _RemotePdfPreview(
         controller: _pdfController,
-        bytes: pdfBytes,
+        previewUrl: _cvUrl!,
+        fallbackBytes: null,
       );
     }
 
     return _NonPdfPreviewState(
       fileName: cv.fileName,
       mimeType: cv.uploadedCvMimeType,
-      summary: cv.parsedSummary,
-      onUploadPdf: () => _pickAndConnectCv(profile, remoteSync),
+      summary: _cvLoadError ?? cv.parsedSummary,
+      onUploadPdf: uploadCV,
     );
   }
 
@@ -309,111 +406,101 @@ class _CVScreenState extends ConsumerState<CVScreen> {
     }
   }
 
-  Future<void> _pickAndConnectCv(
-    UserProfile profile,
-    SmartJobRemoteSync? remoteSync,
-  ) async {
-    setState(() {
-      _isUploadingCv = true;
-      _uploadProgress = 0.08;
-      _uploadStageLabel = 'Opening file picker...';
-    });
-
+  Future<void> uploadCV() async {
     try {
       final result = await FilePicker.platform.pickFiles(
         allowMultiple: false,
         type: FileType.custom,
-        allowedExtensions: const ['pdf', 'doc', 'docx'],
+        allowedExtensions: const ['pdf'],
         withData: true,
       );
 
-      final selectedFile = result?.files.single;
-      if (selectedFile == null) {
+      if (result == null || result.files.isEmpty) {
         return;
+      }
+
+      final file = result.files.first;
+      final fileBytes = file.bytes ?? await _readSelectedFileBytes(file);
+      if (fileBytes == null || fileBytes.isEmpty) {
+        throw Exception('SmartJob could not read the selected PDF.');
       }
 
       if (mounted) {
         setState(() {
-          _uploadProgress = 0.22;
-          _uploadStageLabel = 'Reading ${selectedFile.name}...';
+          _isUploadingCv = true;
+          _uploadProgress = 0.28;
+          _uploadStageLabel = 'Uploading your PDF to SmartJob cloud...';
         });
       }
 
-      final bytes = await _readSelectedFileBytes(selectedFile);
-      if (bytes == null || bytes.isEmpty) {
-        if (mounted) {
-          _showMessage(
-            context,
-            'SmartJob could not read that file. Please choose another CV.',
-          );
-        }
-        return;
+      final client = Supabase.instance.client;
+      final userId = client.auth.currentUser?.id;
+      if (userId == null) {
+        throw Exception('Not logged in');
       }
 
-      var remoteStoragePath = '';
-      var usedLocalFallback = false;
-      if (remoteSync != null) {
-        try {
-          if (mounted) {
-            setState(() {
-              _uploadProgress = 0.52;
-              _uploadStageLabel = 'Syncing CV to SmartJob cloud...';
-            });
-          }
-          remoteStoragePath = await remoteSync.uploadCv(
-            email: profile.email,
-            fileName: selectedFile.name,
-            bytes: bytes,
+      final filePath = '$userId/$userId.pdf';
+      await client.storage.from('cvs').uploadBinary(
+            filePath,
+            fileBytes,
+            fileOptions: const FileOptions(
+              contentType: 'application/pdf',
+              upsert: true,
+            ),
           );
-        } catch (error) {
-          usedLocalFallback = true;
-          if (mounted) {
-            _showMessage(
-              context,
-              '${_describeCvUploadError(error)} SmartJob kept a local copy so your CV workspace still updates.',
-            );
-          }
-        }
+
+      if (mounted) {
+        setState(() {
+          _uploadProgress = 0.74;
+          _uploadStageLabel = 'Saving your CV link to your profile...';
+        });
       }
+
+      final publicUrl = client.storage.from('cvs').getPublicUrl(filePath);
+      await client.from('profiles').update({
+        'cv_url': publicUrl,
+        'updated_at': DateTime.now().toUtc().toIso8601String(),
+      }).eq('id', userId);
+
+      ref.read(smartJobControllerProvider.notifier).connectUploadedCv(
+            fileName: '$userId.pdf',
+            remoteStoragePath: filePath,
+            uploadedCvBase64: base64Encode(fileBytes),
+            uploadedCvMimeType: 'application/pdf',
+          );
 
       if (!mounted) {
         return;
       }
 
-      final mimeType = _mimeTypeForFileName(selectedFile.name);
       setState(() {
-        _uploadProgress = 0.82;
-        _uploadStageLabel = mimeType == 'application/pdf'
-            ? 'Rendering live PDF preview...'
-            : 'Connecting CV and preparing workspace...';
-      });
-      ref.read(smartJobControllerProvider.notifier).connectUploadedCv(
-            fileName: selectedFile.name,
-            remoteStoragePath: remoteStoragePath,
-            uploadedCvBase64:
-                mimeType == 'application/pdf' ? base64Encode(bytes) : '',
-            uploadedCvMimeType: mimeType,
-          );
-
-      setState(() {
+        _cvUrl = publicUrl;
+        _cvLoadError = null;
         _uploadProgress = 1;
-        _uploadStageLabel = 'CV connected successfully.';
+        _uploadStageLabel = 'CV uploaded successfully.';
       });
-      _showMessage(
-        context,
-        usedLocalFallback
-            ? 'CV connected locally. Live preview is ready, and cloud sync can be retried later.'
-            : mimeType == 'application/pdf'
-                ? 'CV uploaded. Live PDF preview is ready.'
-                : 'CV uploaded. Word files are connected, but inline preview works for PDFs only.',
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('CV uploaded successfully!'),
+          backgroundColor: Colors.green,
+        ),
       );
     } catch (error) {
-      if (mounted) {
-        _showMessage(
-          context,
-          _describeCvUploadError(error),
-        );
+      if (!mounted) {
+        return;
       }
+
+      setState(() {
+        _cvLoadError = 'Upload failed: $error';
+      });
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Upload failed: $error'),
+          backgroundColor: Colors.red,
+        ),
+      );
     } finally {
       if (mounted) {
         setState(() {
@@ -423,23 +510,6 @@ class _CVScreenState extends ConsumerState<CVScreen> {
         });
       }
     }
-  }
-
-
-  String _describeCvUploadError(Object error) {
-    final message = error.toString().replaceFirst('Exception: ', '').trim();
-    final lower = message.toLowerCase();
-
-    if (lower.contains('bucket') && lower.contains('not found')) {
-      return 'CV upload failed because the Supabase storage bucket `cvs` was not found.';
-    }
-    if (lower.contains('row-level security') || lower.contains('permission')) {
-      return 'CV upload failed because your Supabase storage policies are blocking uploads for this signed-in user.';
-    }
-    if (lower.contains('signed in')) {
-      return message;
-    }
-    return 'Uploading your CV failed${message.isEmpty ? '.' : ': $message'}';
   }
 
   Future<void> _showExportSheet(
@@ -530,118 +600,241 @@ class _CVScreenState extends ConsumerState<CVScreen> {
     await showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
-      backgroundColor: AppColors.surface(Theme.of(context).brightness),
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
-      ),
+      backgroundColor: Colors.transparent,
       builder: (sheetContext) {
         var sectionOrder = [...initialOrder];
+        var selectedTemplate = profile.cvInsight.selectedTemplate;
+        var selectedFont = profile.cvInsight.fontFamily;
+
         return StatefulBuilder(
           builder: (context, setSheetState) {
-            return SafeArea(
-              child: Padding(
-                padding: EdgeInsets.fromLTRB(
-                  20,
-                  16,
-                  20,
-                  20 + MediaQuery.viewInsetsOf(context).bottom,
-                ),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      'Workspace settings',
-                      style: Theme.of(context).textTheme.displaySmall,
-                    ),
-                    const SizedBox(height: 6),
-                    Text(
-                      'Manage template context, sync state, and section order without taking space away from the CV preview.',
-                      style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                            color: AppColors.subtext(
-                              Theme.of(context).brightness,
-                            ),
-                          ),
-                    ),
-                    const SizedBox(height: 16),
-                    _InfoTile(
-                      label: 'Selected template',
-                      value: profile.cvInsight.selectedTemplate,
-                    ),
-                    const SizedBox(height: 12),
-                    _InfoTile(
-                      label: 'Font family',
-                      value: profile.cvInsight.fontFamily,
-                    ),
-                    const SizedBox(height: 12),
-                    _InfoTile(
-                      label: 'Cloud sync',
-                      value: profile.cvInsight.remoteStoragePath.isEmpty
-                          ? 'Local only'
-                          : 'Connected to cloud storage',
-                    ),
-                    const SizedBox(height: 18),
-                    Text(
-                      'Section order',
-                      style: Theme.of(context).textTheme.headlineMedium,
-                    ),
-                    const SizedBox(height: 10),
-                    SizedBox(
-                      height: 280,
-                      child: ReorderableListView.builder(
-                        itemCount: sectionOrder.length,
-                        onReorder: (oldIndex, newIndex) {
-                          final updated = [...sectionOrder];
-                          if (newIndex > oldIndex) {
-                            newIndex -= 1;
-                          }
-                          final moved = updated.removeAt(oldIndex);
-                          updated.insert(newIndex, moved);
-                          setSheetState(() => sectionOrder = updated);
-                          controller.updateCvStudioCustomization(
-                            sectionOrder: updated,
-                          );
-                        },
-                        itemBuilder: (context, index) {
-                          final section = sectionOrder[index];
-                          return Container(
-                            key: ValueKey(section),
-                            margin: const EdgeInsets.only(bottom: 10),
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 14,
-                              vertical: 14,
-                            ),
-                            decoration: BoxDecoration(
-                              color: AppColors.surfaceMuted(
-                                Theme.of(context).brightness,
-                              ),
-                              borderRadius: BorderRadius.circular(18),
-                              border: Border.all(
-                                color: AppColors.stroke(
-                                  Theme.of(context).brightness,
-                                ),
-                              ),
-                            ),
-                            child: Row(
-                              children: [
-                                Expanded(
-                                  child: Text(_sectionLabel(section)),
-                                ),
-                                Icon(
-                                  Icons.drag_indicator,
-                                  color: AppColors.subtext(
-                                    Theme.of(context).brightness,
-                                  ),
-                                ),
-                              ],
-                            ),
-                          );
-                        },
+            final brightness = Theme.of(context).brightness;
+
+            return DraggableScrollableSheet(
+              initialChildSize: 0.88,
+              minChildSize: 0.5,
+              maxChildSize: 0.95,
+              expand: false,
+              builder: (context, scrollController) {
+                return Container(
+                  decoration: BoxDecoration(
+                    color: AppColors.surface(brightness),
+                    borderRadius:
+                        const BorderRadius.vertical(top: Radius.circular(28)),
+                    border: Border.all(color: AppColors.stroke(brightness)),
+                  ),
+                  child: Column(
+                    children: [
+                      Container(
+                        margin: const EdgeInsets.symmetric(vertical: 12),
+                        width: 42,
+                        height: 4,
+                        decoration: BoxDecoration(
+                          color: AppColors.subtext(brightness)
+                              .withValues(alpha: 0.35),
+                          borderRadius: BorderRadius.circular(999),
+                        ),
                       ),
-                    ),
-                  ],
-                ),
-              ),
+                      Expanded(
+                        child: SingleChildScrollView(
+                          controller: scrollController,
+                          padding:
+                              const EdgeInsets.fromLTRB(20, 4, 20, 32),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                'Workspace settings',
+                                style: Theme.of(context)
+                                    .textTheme
+                                    .displaySmall,
+                              ),
+                              const SizedBox(height: 6),
+                              Text(
+                                'Choose a template, set a font, and reorder sections. Changes preview instantly.',
+                                style: Theme.of(context)
+                                    .textTheme
+                                    .bodyMedium
+                                    ?.copyWith(
+                                      color: AppColors.subtext(brightness),
+                                    ),
+                              ),
+                              const SizedBox(height: 22),
+
+                              // ── Template grid ──────────────────────
+                              Text(
+                                'CV Template',
+                                style: Theme.of(context)
+                                    .textTheme
+                                    .headlineMedium,
+                              ),
+                              const SizedBox(height: 4),
+                              Text(
+                                'Pick the layout that best fits your industry.',
+                                style: Theme.of(context)
+                                    .textTheme
+                                    .bodySmall
+                                    ?.copyWith(
+                                      color: AppColors.subtext(brightness),
+                                    ),
+                              ),
+                              const SizedBox(height: 14),
+                              GridView.count(
+                                crossAxisCount: 3,
+                                shrinkWrap: true,
+                                physics:
+                                    const NeverScrollableScrollPhysics(),
+                                crossAxisSpacing: 12,
+                                mainAxisSpacing: 12,
+                                childAspectRatio: 0.72,
+                                children: [
+                                  for (final tpl in _cvTemplates)
+                                    _TemplateCard(
+                                      template: tpl,
+                                      isSelected:
+                                          selectedTemplate == tpl.name,
+                                      onTap: () {
+                                        setSheetState(() =>
+                                            selectedTemplate = tpl.name);
+                                        controller
+                                            .updateCvStudioCustomization(
+                                          templateName: tpl.name,
+                                        );
+                                      },
+                                    ),
+                                ],
+                              ),
+                              const SizedBox(height: 22),
+
+                              // ── Font family ────────────────────────
+                              Text(
+                                'Font',
+                                style: Theme.of(context)
+                                    .textTheme
+                                    .headlineMedium,
+                              ),
+                              const SizedBox(height: 10),
+                              Wrap(
+                                spacing: 10,
+                                runSpacing: 10,
+                                children: [
+                                  for (final font in _cvFonts)
+                                    _FontChip(
+                                      font: font,
+                                      selected: selectedFont == font,
+                                      onTap: () {
+                                        setSheetState(
+                                            () => selectedFont = font);
+                                        controller
+                                            .updateCvStudioCustomization(
+                                          fontFamily: font,
+                                        );
+                                      },
+                                    ),
+                                ],
+                              ),
+                              const SizedBox(height: 22),
+
+                              // ── Cloud sync status ──────────────────
+                              _InfoTile(
+                                label: 'Cloud sync',
+                                value:
+                                    profile.cvInsight.remoteStoragePath.isEmpty
+                                        ? 'Local only – upload a CV to enable cloud sync'
+                                        : 'Connected · ${profile.cvInsight.remoteStoragePath.split('/').last}',
+                              ),
+                              const SizedBox(height: 22),
+
+                              // ── Section order ──────────────────────
+                              Text(
+                                'Section order',
+                                style: Theme.of(context)
+                                    .textTheme
+                                    .headlineMedium,
+                              ),
+                              const SizedBox(height: 4),
+                              Text(
+                                'Drag to reorder how sections appear on your CV.',
+                                style: Theme.of(context)
+                                    .textTheme
+                                    .bodySmall
+                                    ?.copyWith(
+                                      color: AppColors.subtext(brightness),
+                                    ),
+                              ),
+                              const SizedBox(height: 12),
+                              SizedBox(
+                                height: sectionOrder.length * 60.0,
+                                child: ReorderableListView.builder(
+                                  shrinkWrap: true,
+                                  physics:
+                                      const NeverScrollableScrollPhysics(),
+                                  itemCount: sectionOrder.length,
+                                  onReorder: (oldIndex, newIndex) {
+                                    final updated = [...sectionOrder];
+                                    if (newIndex > oldIndex) {
+                                      newIndex -= 1;
+                                    }
+                                    final moved =
+                                        updated.removeAt(oldIndex);
+                                    updated.insert(newIndex, moved);
+                                    setSheetState(
+                                        () => sectionOrder = updated);
+                                    controller.updateCvStudioCustomization(
+                                      sectionOrder: updated,
+                                    );
+                                  },
+                                  itemBuilder: (context, index) {
+                                    final section = sectionOrder[index];
+                                    return Container(
+                                      key: ValueKey(section),
+                                      margin: const EdgeInsets.only(
+                                          bottom: 8),
+                                      padding: const EdgeInsets.symmetric(
+                                        horizontal: 14,
+                                        vertical: 16,
+                                      ),
+                                      decoration: BoxDecoration(
+                                        color:
+                                            AppColors.surfaceMuted(brightness),
+                                        borderRadius:
+                                            BorderRadius.circular(16),
+                                        border: Border.all(
+                                          color:
+                                              AppColors.stroke(brightness),
+                                        ),
+                                      ),
+                                      child: Row(
+                                        children: [
+                                          Icon(
+                                            Icons.drag_indicator_rounded,
+                                            size: 18,
+                                            color:
+                                                AppColors.subtext(brightness),
+                                          ),
+                                          const SizedBox(width: 12),
+                                          Expanded(
+                                            child: Text(
+                                              _sectionLabel(section),
+                                              style: Theme.of(context)
+                                                  .textTheme
+                                                  .bodyLarge,
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                    );
+                                  },
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                );
+              },
             );
           },
         );
@@ -818,20 +1011,6 @@ class _CVScreenState extends ConsumerState<CVScreen> {
     } catch (_) {
       return null;
     }
-  }
-
-  String _mimeTypeForFileName(String fileName) {
-    final lower = fileName.toLowerCase();
-    if (lower.endsWith('.pdf')) {
-      return 'application/pdf';
-    }
-    if (lower.endsWith('.doc')) {
-      return 'application/msword';
-    }
-    if (lower.endsWith('.docx')) {
-      return 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
-    }
-    return 'application/octet-stream';
   }
 
   String _shareableCvLink(UserProfile profile) {
@@ -1412,14 +1591,12 @@ class _PreviewShell extends StatelessWidget {
 class _RemotePdfPreview extends StatefulWidget {
   const _RemotePdfPreview({
     required this.controller,
-    required this.remoteSync,
-    required this.storagePath,
+    required this.previewUrl,
     this.fallbackBytes,
   });
 
   final PdfViewerController controller;
-  final SmartJobRemoteSync remoteSync;
-  final String storagePath;
+  final String previewUrl;
   final Uint8List? fallbackBytes;
 
   @override
@@ -1427,79 +1604,63 @@ class _RemotePdfPreview extends StatefulWidget {
 }
 
 class _RemotePdfPreviewState extends State<_RemotePdfPreview> {
-  late final Future<String> _previewUrlFuture;
   bool _isLoaded = false;
   String? _loadError;
 
   @override
-  void initState() {
-    super.initState();
-    _previewUrlFuture = widget.remoteSync.createCvPreviewUrl(widget.storagePath);
-  }
-
-  @override
   Widget build(BuildContext context) {
-    return FutureBuilder<String>(
-      future: _previewUrlFuture,
-      builder: (context, snapshot) {
-        if (snapshot.connectionState != ConnectionState.done) {
-          return const _PdfPreviewScaffold(child: _PdfPreviewSkeleton());
-        }
+    if (widget.previewUrl.isEmpty) {
+      return _PdfPreviewScaffold(
+        child: _PdfPreviewErrorState(
+          message: 'SmartJob could not load your uploaded PDF preview.',
+        ),
+      );
+    }
 
-        if (snapshot.hasError || !snapshot.hasData || snapshot.data!.isEmpty) {
-          if (widget.fallbackBytes != null) {
-            return _EmbeddedPdfPreview(
-              controller: widget.controller,
-              bytes: widget.fallbackBytes!,
-            );
-          }
+    if (_loadError != null && widget.fallbackBytes != null) {
+      return _EmbeddedPdfPreview(
+        controller: widget.controller,
+        bytes: widget.fallbackBytes!,
+      );
+    }
 
-          return _PdfPreviewScaffold(
-            child: _PdfPreviewErrorState(
-              message: 'SmartJob could not load your uploaded PDF preview.',
-            ),
-          );
-        }
-
-        return _PdfPreviewScaffold(
-          child: Stack(
-            fit: StackFit.expand,
-            children: [
-              SfPdfViewer.network(
-                snapshot.data!,
-                key: ValueKey(snapshot.data),
-                controller: widget.controller,
-                pageSpacing: 0,
-                canShowScrollHead: false,
-                canShowPaginationDialog: false,
-                onDocumentLoaded: (_) {
-                  if (mounted) {
-                    setState(() => _isLoaded = true);
-                  }
-                },
-                onDocumentLoadFailed: (details) {
-                  if (mounted) {
-                    setState(() {
-                      _isLoaded = true;
-                      _loadError = details.description;
-                    });
-                  }
-                },
-              ),
-              IgnorePointer(
-                ignoring: _isLoaded,
-                child: AnimatedOpacity(
-                  duration: const Duration(milliseconds: 220),
-                  opacity: _isLoaded ? 0 : 1,
-                  child: const _PdfPreviewSkeleton(),
-                ),
-              ),
-              if (_loadError != null)
-                _PdfPreviewErrorState(message: _loadError!),
-            ],
+    return _PdfPreviewScaffold(
+      child: Stack(
+        fit: StackFit.expand,
+        children: [
+          SfPdfViewer.network(
+            widget.previewUrl,
+            key: ValueKey(widget.previewUrl),
+            controller: widget.controller,
+            pageSpacing: 0,
+            canShowScrollHead: false,
+            canShowPaginationDialog: false,
+            onDocumentLoaded: (_) {
+              if (mounted) {
+                setState(() => _isLoaded = true);
+              }
+            },
+            onDocumentLoadFailed: (details) {
+              if (mounted) {
+                setState(() {
+                  _isLoaded = true;
+                  _loadError = details.description;
+                });
+              }
+            },
           ),
-        );
-      },
+          IgnorePointer(
+            ignoring: _isLoaded,
+            child: AnimatedOpacity(
+              duration: const Duration(milliseconds: 220),
+              opacity: _isLoaded ? 0 : 1,
+              child: const _PdfPreviewSkeleton(),
+            ),
+          ),
+          if (_loadError != null)
+            _PdfPreviewErrorState(message: _loadError!),
+        ],
+      ),
     );
   }
 }
@@ -2787,5 +2948,472 @@ String _editorSectionForTip(String tip) {
     return 'skills';
   }
   return 'experience';
+}
+
+// ─────────────────────────────────────────────────────────────────
+// Template & font data
+// ─────────────────────────────────────────────────────────────────
+
+class _CvTemplateData {
+  const _CvTemplateData({
+    required this.name,
+    required this.label,
+    required this.description,
+    required this.accentColor,
+    required this.hasLeftBar,
+    required this.hasTwoColumns,
+  });
+
+  final String name;
+  final String label;
+  final String description;
+  final Color accentColor;
+  final bool hasLeftBar;
+  final bool hasTwoColumns;
+}
+
+const List<_CvTemplateData> _cvTemplates = [
+  _CvTemplateData(
+    name: 'Minimal',
+    label: 'Minimal',
+    description: 'Clean & spacious',
+    accentColor: Color(0xFF19324A),
+    hasLeftBar: false,
+    hasTwoColumns: false,
+  ),
+  _CvTemplateData(
+    name: 'Classic',
+    label: 'Classic',
+    description: 'Traditional & formal',
+    accentColor: Color(0xFF5E8A86),
+    hasLeftBar: false,
+    hasTwoColumns: false,
+  ),
+  _CvTemplateData(
+    name: 'Modern',
+    label: 'Modern',
+    description: 'Bold sidebar accent',
+    accentColor: Color(0xFF5D8CC3),
+    hasLeftBar: true,
+    hasTwoColumns: false,
+  ),
+  _CvTemplateData(
+    name: 'TwoColumn',
+    label: 'Two-Column',
+    description: 'Skills on the left',
+    accentColor: Color(0xFFD39A4D),
+    hasLeftBar: false,
+    hasTwoColumns: true,
+  ),
+  _CvTemplateData(
+    name: 'Professional',
+    label: 'Professional',
+    description: 'Header banner style',
+    accentColor: Color(0xFFC97666),
+    hasLeftBar: false,
+    hasTwoColumns: false,
+  ),
+  _CvTemplateData(
+    name: 'Compact',
+    label: 'Compact',
+    description: 'Dense, fits more',
+    accentColor: Color(0xFF57A37B),
+    hasLeftBar: false,
+    hasTwoColumns: false,
+  ),
+];
+
+const List<String> _cvFonts = [
+  'Inter',
+  'Georgia',
+  'Roboto',
+  'Merriweather',
+  'Lato',
+  'Playfair Display',
+];
+
+// ─────────────────────────────────────────────────────────────────
+// Template card widget
+// ─────────────────────────────────────────────────────────────────
+
+class _TemplateCard extends StatelessWidget {
+  const _TemplateCard({
+    required this.template,
+    required this.isSelected,
+    required this.onTap,
+  });
+
+  final _CvTemplateData template;
+  final bool isSelected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final brightness = Theme.of(context).brightness;
+
+    return GestureDetector(
+      onTap: onTap,
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 200),
+        decoration: BoxDecoration(
+          color: AppColors.surface(brightness),
+          borderRadius: BorderRadius.circular(18),
+          border: Border.all(
+            color: isSelected
+                ? template.accentColor
+                : AppColors.stroke(brightness),
+            width: isSelected ? 2 : 1,
+          ),
+          boxShadow: isSelected
+              ? [
+                  BoxShadow(
+                    color: template.accentColor.withValues(alpha: 0.22),
+                    blurRadius: 12,
+                    offset: const Offset(0, 4),
+                  ),
+                ]
+              : null,
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            // Mini CV preview
+            Expanded(
+              child: ClipRRect(
+                borderRadius:
+                    const BorderRadius.vertical(top: Radius.circular(16)),
+                child: _CvMiniPreview(template: template),
+              ),
+            ),
+            // Label row
+            Padding(
+              padding: const EdgeInsets.fromLTRB(10, 8, 10, 10),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          template.label,
+                          style:
+                              Theme.of(context).textTheme.labelLarge?.copyWith(
+                                    fontWeight: FontWeight.w700,
+                                    color: isSelected
+                                        ? template.accentColor
+                                        : AppColors.text(brightness),
+                                  ),
+                        ),
+                        Text(
+                          template.description,
+                          style:
+                              Theme.of(context).textTheme.labelSmall?.copyWith(
+                                    color: AppColors.subtext(brightness),
+                                  ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  if (isSelected)
+                    Container(
+                      width: 18,
+                      height: 18,
+                      decoration: BoxDecoration(
+                        color: template.accentColor,
+                        shape: BoxShape.circle,
+                      ),
+                      child: const Icon(
+                        Icons.check,
+                        size: 11,
+                        color: Colors.white,
+                      ),
+                    ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+// Mini CV visual mockup painted with containers
+class _CvMiniPreview extends StatelessWidget {
+  const _CvMiniPreview({required this.template});
+
+  final _CvTemplateData template;
+
+  @override
+  Widget build(BuildContext context) {
+    final accent = template.accentColor;
+    const bg = Colors.white;
+
+    if (template.hasLeftBar) {
+      // Sidebar layout
+      return Container(
+        color: bg,
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Container(
+              width: 28,
+              color: accent,
+              padding: const EdgeInsets.all(4),
+              child: Column(
+                children: [
+                  const SizedBox(height: 8),
+                  Container(
+                    width: 16,
+                    height: 16,
+                    decoration: const BoxDecoration(
+                      color: Colors.white38,
+                      shape: BoxShape.circle,
+                    ),
+                  ),
+                  const SizedBox(height: 6),
+                  for (final w in [0.8, 0.6, 0.7, 0.5])
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 4),
+                      child: FractionallySizedBox(
+                        widthFactor: w,
+                        child: Container(
+                          height: 3,
+                          decoration: BoxDecoration(
+                            color: Colors.white38,
+                            borderRadius: BorderRadius.circular(2),
+                          ),
+                        ),
+                      ),
+                    ),
+                ],
+              ),
+            ),
+            Expanded(
+              child: _MiniContentColumn(accent: accent),
+            ),
+          ],
+        ),
+      );
+    }
+
+    if (template.hasTwoColumns) {
+      return Container(
+        color: bg,
+        padding: const EdgeInsets.all(6),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Container(
+              height: 14,
+              decoration: BoxDecoration(
+                color: accent.withValues(alpha: 0.15),
+                borderRadius: BorderRadius.circular(4),
+              ),
+            ),
+            const SizedBox(height: 6),
+            Expanded(
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  SizedBox(
+                    width: 36,
+                    child: Column(
+                      children: [
+                        for (final w in [0.9, 0.7, 0.8, 0.6, 0.75])
+                          Padding(
+                            padding: const EdgeInsets.only(bottom: 4),
+                            child: FractionallySizedBox(
+                              widthFactor: w,
+                              child: Container(
+                                height: 4,
+                                decoration: BoxDecoration(
+                                  color: accent.withValues(alpha: 0.35),
+                                  borderRadius: BorderRadius.circular(2),
+                                ),
+                              ),
+                            ),
+                          ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(width: 6),
+                  Expanded(child: _MiniContentColumn(accent: accent)),
+                ],
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
+    if (template.name == 'Professional') {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Container(
+            height: 28,
+            color: accent,
+            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 5),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Container(
+                  height: 6,
+                  width: 60,
+                  decoration: BoxDecoration(
+                    color: Colors.white70,
+                    borderRadius: BorderRadius.circular(2),
+                  ),
+                ),
+                const SizedBox(height: 3),
+                Container(
+                  height: 3,
+                  width: 40,
+                  decoration: BoxDecoration(
+                    color: Colors.white38,
+                    borderRadius: BorderRadius.circular(2),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          Expanded(
+            child: Container(
+              color: Colors.white,
+              padding: const EdgeInsets.all(5),
+              child: _MiniContentColumn(accent: accent),
+            ),
+          ),
+        ],
+      );
+    }
+
+    // Default single-column (Minimal, Classic, Compact)
+    return Container(
+      color: bg,
+      padding: const EdgeInsets.all(7),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Container(
+            height: template.name == 'Compact' ? 7 : 10,
+            width: double.infinity,
+            decoration: BoxDecoration(
+              color: accent.withValues(
+                alpha: template.name == 'Minimal' ? 0.08 : 0.14,
+              ),
+              borderRadius: BorderRadius.circular(3),
+            ),
+          ),
+          const SizedBox(height: 5),
+          _MiniContentColumn(
+            accent: accent,
+            dense: template.name == 'Compact',
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _MiniContentColumn extends StatelessWidget {
+  const _MiniContentColumn({
+    required this.accent,
+    this.dense = false,
+  });
+
+  final Color accent;
+  final bool dense;
+
+  @override
+  Widget build(BuildContext context) {
+    final lineHeights = dense
+        ? [3.0, 3.0, 3.0, 3.0, 3.0, 3.0]
+        : [4.0, 3.0, 3.0, 4.0, 3.0, 3.0];
+    final widths = [0.9, 0.7, 0.8, 0.85, 0.6, 0.75];
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        for (var i = 0; i < lineHeights.length; i++) ...[
+          if (i == 3)
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: 3),
+              child: Container(
+                height: 1,
+                color: accent.withValues(alpha: 0.25),
+              ),
+            ),
+          FractionallySizedBox(
+            widthFactor: widths[i],
+            child: Container(
+              height: lineHeights[i],
+              margin: const EdgeInsets.only(bottom: 3),
+              decoration: BoxDecoration(
+                color: i == 0 || i == 3
+                    ? accent.withValues(alpha: 0.5)
+                    : accent.withValues(alpha: 0.18),
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+          ),
+        ],
+      ],
+    );
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────
+// Font chip widget
+// ─────────────────────────────────────────────────────────────────
+
+class _FontChip extends StatelessWidget {
+  const _FontChip({
+    required this.font,
+    required this.selected,
+    required this.onTap,
+  });
+
+  final String font;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final brightness = Theme.of(context).brightness;
+
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(999),
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 180),
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+          decoration: BoxDecoration(
+            color: selected
+                ? AppColors.midnight
+                : AppColors.surface(brightness),
+            borderRadius: BorderRadius.circular(999),
+            border: Border.all(
+              color: selected
+                  ? AppColors.midnight
+                  : AppColors.stroke(brightness),
+            ),
+          ),
+          child: Text(
+            font,
+            style: Theme.of(context).textTheme.labelLarge?.copyWith(
+                  color:
+                      selected ? Colors.white : AppColors.text(brightness),
+                  fontWeight:
+                      selected ? FontWeight.w700 : FontWeight.w500,
+                ),
+          ),
+        ),
+      ),
+    );
+  }
 }
 

@@ -4,6 +4,7 @@ import 'package:lucide_icons/lucide_icons.dart';
 
 import '../../application/controllers/smart_job_controller.dart';
 import '../../domain/models/job.dart';
+import '../../services/supabase_data_service.dart';
 import '../../theme/app_colors.dart';
 import '../shared/widgets/smart_job_ui.dart';
 
@@ -78,14 +79,32 @@ class JobDetailsScreen extends ConsumerWidget {
         applied: applied,
         onSave: () {
           ref.read(smartJobControllerProvider.notifier).toggleSaveJob(job.id);
+          final nextSaved = !job.isSaved;
+          SupabaseDataService.saveJobInteraction(
+            job.copyWith(isSaved: nextSaved),
+            nextSaved ? 'saved' : 'viewed',
+          );
           _showToast(
             context,
             job.isSaved ? 'Removed from saved jobs.' : 'Saved to your shortlist.',
           );
         },
-        onApply: () {
-          ref.read(smartJobControllerProvider.notifier).easyApply(job);
-          _showToast(context, 'Application sent to ${job.companyName}.');
+        onApply: () async {
+          try {
+            final created = await SupabaseDataService.applyToJob(job);
+            if (!context.mounted) {
+              return;
+            }
+            ref.read(smartJobControllerProvider.notifier).easyApply(job);
+            _showToast(
+              context,
+              created
+                  ? 'Application sent to ${job.companyName}.'
+                  : 'You already applied to ${job.companyName}.',
+            );
+          } catch (error) {
+            _showToast(context, 'Could not send application: $error');
+          }
         },
         onShare: () => _showToast(context, 'Share link ready for ${job.title}.'),
       ),
@@ -99,7 +118,7 @@ class JobDetailsScreen extends ConsumerWidget {
               elevation: 0,
               surfaceTintColor: Colors.transparent,
               backgroundColor: AppColors.canvas(brightness).withValues(alpha: 0.92),
-              expandedHeight: context.isCompact ? 378 : 338,
+              expandedHeight: context.isCompact ? 400 : 358,
               leading: _TopBarButton(
                 icon: LucideIcons.chevronLeft,
                 onTap: () => Navigator.of(context).pop(),
@@ -922,7 +941,4 @@ class _MetaChip extends StatelessWidget {
     );
   }
 }
-
-
-
 

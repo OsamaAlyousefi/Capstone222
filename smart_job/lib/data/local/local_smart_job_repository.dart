@@ -110,9 +110,30 @@ class LocalSmartJobRepository implements SmartJobRepository {
   }
 
   SmartJobAccountData cacheRemoteAccount(Map<String, dynamic> accountMap) {
-    final account = _normalizedAccount(_accountFromMap(accountMap));
-    _database.writeAccount(account.profile.email, _accountToMap(account));
-    return account;
+    final remote = _normalizedAccount(_accountFromMap(accountMap));
+
+    // Remote sync can lag behind local actions (e.g. completing onboarding
+    // while offline). Preserve critical local flags so a stale remote copy
+    // never rolls back progress the user already made.
+    final localStored = _database.readAccount(remote.profile.email);
+    final localOnboardingDone = localStored != null &&
+        ((localStored['profile'] as Map?)
+                ?['hasCompletedOnboarding'] as bool? ??
+            false);
+    final localHasUploadedCv = localStored != null &&
+        ((localStored['profile'] as Map?)?['hasUploadedCv'] as bool? ?? false);
+
+    final merged = remote.copyWith(
+      profile: remote.profile.copyWith(
+        hasCompletedOnboarding:
+            localOnboardingDone || remote.profile.hasCompletedOnboarding,
+        hasUploadedCv:
+            localHasUploadedCv || remote.profile.hasUploadedCv,
+      ),
+    );
+
+    _database.writeAccount(merged.profile.email, _accountToMap(merged));
+    return merged;
   }
 
   SmartJobAccountData _newAccountData({
@@ -166,7 +187,7 @@ class LocalSmartJobRepository implements SmartJobRepository {
               'Structured profile guidance',
               'ATS scoring support',
             ],
-            selectedTemplate: 'Classic Black & White Professional',
+            selectedTemplate: 'Classic',
             parsedSummary:
                 'Your SmartJob CV draft is ready. Add sections to improve ATS strength and recruiter trust.',
             remoteStoragePath: '',
@@ -182,8 +203,8 @@ class LocalSmartJobRepository implements SmartJobRepository {
     return SmartJobAccountData(
       profile: profile,
       jobs: _seedRepository.jobs(),
-      applications: const [],
-      messages: const [],
+      applications: _seedRepository.applications(),
+      messages: _seedRepository.messages(),
     );
   }
 
@@ -391,7 +412,7 @@ class LocalSmartJobRepository implements SmartJobRepository {
         missingKeywords: _stringList(cvInsight['missingKeywords']),
         highlightedStrengths: _stringList(cvInsight['highlightedStrengths']),
         selectedTemplate:
-            cvInsight['selectedTemplate'] as String? ?? 'Classic Black & White Professional',
+            cvInsight['selectedTemplate'] as String? ?? 'Classic',
         parsedSummary: cvInsight['parsedSummary'] as String? ?? '',
         remoteStoragePath: cvInsight['remoteStoragePath'] as String? ?? '',
         uploadedCvBase64: cvInsight['uploadedCvBase64'] as String? ?? '',
