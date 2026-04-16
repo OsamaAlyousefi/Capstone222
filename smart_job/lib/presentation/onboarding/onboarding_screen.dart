@@ -474,11 +474,11 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
   }
 
   void _finishBuilderFlow() {
-    ref.read(smartJobControllerProvider.notifier).completeOnboardingForBuilder(
+    ref.read(smartJobControllerProvider.notifier).beginBuilderSetup(
           targetRoles: _selectedRoles,
           preferredLocations: _selectedLocations,
         );
-    context.go(AppRoute.main);
+    context.go(AppRoute.cvSetup);
   }
 
   void _showMessage(String message) {

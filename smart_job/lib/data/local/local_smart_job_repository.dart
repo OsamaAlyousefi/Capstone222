@@ -41,7 +41,23 @@ class LocalSmartJobRepository implements SmartJobRepository {
     final normalizedEmail = _normalizeEmail(email);
     final stored = _database.readAccount(normalizedEmail);
     if (stored != null) {
-      return _accountFromMap(stored);
+      final account = _accountFromMap(stored);
+      // Backfill seed data for existing accounts created before seed fix.
+      if (account.messages.isEmpty || account.applications.isEmpty) {
+        final backfilled = SmartJobAccountData(
+          profile: account.profile,
+          jobs: account.jobs.isEmpty ? _seedRepository.jobs() : account.jobs,
+          applications: account.applications.isEmpty
+              ? _seedRepository.applications()
+              : account.applications,
+          messages: account.messages.isEmpty
+              ? _seedRepository.messages()
+              : account.messages,
+        );
+        saveAccount(backfilled);
+        return backfilled;
+      }
+      return account;
     }
 
     final created = _newAccountData(

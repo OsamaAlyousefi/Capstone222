@@ -108,6 +108,14 @@ class SmartJobController extends Notifier<SmartJobState> {
       themeMode: state.profile.themeMode,
     );
     state = _buildStateForAccount(account);
+    // Login implies the user already has a Supabase account, so they should
+    // never be forced through onboarding again (e.g. after reinstall).
+    if (!state.profile.hasCompletedOnboarding) {
+      _updateProfile(
+        (profile) => profile.copyWith(hasCompletedOnboarding: true),
+        autosaveLabel: 'Account restored',
+      );
+    }
     // Hydrate from Supabase in the background — local state is already usable.
     _refreshFromSupabase();
   }

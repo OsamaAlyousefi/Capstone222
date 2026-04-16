@@ -21,38 +21,7 @@ class InboxScreen extends ConsumerStatefulWidget {
 
 class _InboxScreenState extends ConsumerState<InboxScreen> {
   String? _selectedMessageId;
-  bool _isLoading = true;
-  String? _error;
-  List<InboxMessage> _messages = const [];
   bool _aliasCopied = false;
-
-  @override
-  void initState() {
-    super.initState();
-    _loadMessages();
-  }
-
-  Future<void> _loadMessages() async {
-    try {
-      final remoteMessages = await SupabaseDataService.fetchInboxMessages();
-      if (!mounted) return;
-      final localMessages = ref.read(smartJobControllerProvider).messages;
-      final remoteIds = remoteMessages.map((m) => m.id).toSet();
-      final localOnly = localMessages.where((m) => !remoteIds.contains(m.id)).toList();
-      setState(() {
-        _messages = [...remoteMessages, ...localOnly];
-        _error = null;
-        _isLoading = false;
-      });
-    } catch (error) {
-      if (!mounted) return;
-      setState(() {
-        _error = error.toString();
-        _messages = ref.read(smartJobControllerProvider).messages;
-        _isLoading = false;
-      });
-    }
-  }
 
   Future<void> _copyAlias(String alias) async {
     await Clipboard.setData(ClipboardData(text: alias));
@@ -66,18 +35,11 @@ class _InboxScreenState extends ConsumerState<InboxScreen> {
   @override
   Widget build(BuildContext context) {
     final state = ref.watch(smartJobControllerProvider);
-    final sourceMessages =
-        _messages.isNotEmpty || (_error == null && !_isLoading)
-            ? _messages
-            : state.messages;
+    final sourceMessages = state.messages;
     final messages = _applyFilter(sourceMessages, state.selectedInboxFilter);
     final unreadCount =
         sourceMessages.where((message) => message.isUnread).length;
     final alias = state.profile.smartInboxAlias;
-
-    if (_isLoading && sourceMessages.isEmpty) {
-      return const Center(child: CircularProgressIndicator());
-    }
 
     final selectedMessage = messages.isNotEmpty
         ? messages.firstWhere(
@@ -187,16 +149,7 @@ class _InboxScreenState extends ConsumerState<InboxScreen> {
                 isSelected: message.id ==
                     (_selectedMessageId ?? messages.first.id),
                 onTap: () {
-                  setState(() {
-                    _selectedMessageId = message.id;
-                    _messages = [
-                      for (final m in sourceMessages)
-                        if (m.id == message.id)
-                          m.copyWith(isUnread: false)
-                        else
-                          m,
-                    ];
-                  });
+                  setState(() => _selectedMessageId = message.id);
                   ref
                       .read(smartJobControllerProvider.notifier)
                       .markMessageRead(message.id);

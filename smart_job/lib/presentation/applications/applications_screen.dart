@@ -5,7 +5,6 @@ import 'package:lucide_icons/lucide_icons.dart';
 
 import '../../application/controllers/smart_job_controller.dart';
 import '../../domain/models/application.dart';
-import '../../services/supabase_data_service.dart';
 import '../../theme/app_colors.dart';
 import '../shared/widgets/smart_job_ui.dart';
 
@@ -18,48 +17,11 @@ class ApplicationsScreen extends ConsumerStatefulWidget {
 
 class _ApplicationsScreenState extends ConsumerState<ApplicationsScreen> {
   ApplicationStatus? _statusFilter;
-  bool _isLoading = true;
-  String? _error;
-  List<JobApplication> _applications = const [];
-
-  @override
-  void initState() {
-    super.initState();
-    _loadApplications();
-  }
-
-  Future<void> _loadApplications() async {
-    try {
-      final remoteApps = await SupabaseDataService.fetchApplications();
-      if (!mounted) return;
-      final localApps = ref.read(smartJobControllerProvider).applications;
-      final remoteIds = remoteApps.map((a) => a.id).toSet();
-      final localOnly = localApps.where((a) => !remoteIds.contains(a.id)).toList();
-      setState(() {
-        _applications = [...remoteApps, ...localOnly];
-        _error = null;
-        _isLoading = false;
-      });
-    } catch (error) {
-      if (!mounted) return;
-      setState(() {
-        _error = error.toString();
-        _applications = ref.read(smartJobControllerProvider).applications;
-        _isLoading = false;
-      });
-    }
-  }
 
   @override
   Widget build(BuildContext context) {
     final state = ref.watch(smartJobControllerProvider);
-    final allApps = _applications.isNotEmpty || (_error == null && !_isLoading)
-        ? _applications
-        : state.applications;
-
-    if (_isLoading && allApps.isEmpty) {
-      return const Center(child: CircularProgressIndicator());
-    }
+    final allApps = state.applications;
 
     final counts = {
       for (final s in ApplicationStatus.values)
@@ -164,7 +126,7 @@ class _ApplicationsScreenState extends ConsumerState<ApplicationsScreen> {
                       physics: const NeverScrollableScrollPhysics(),
                       crossAxisSpacing: 12,
                       mainAxisSpacing: 12,
-                      childAspectRatio: 2.2,
+                      childAspectRatio: 1.8,
                       children: statItems.map((d) => _StatCard(data: d)).toList(),
                     );
                   },

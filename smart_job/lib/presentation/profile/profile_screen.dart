@@ -84,7 +84,6 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
 
     return SmartJobScrollPage(
       maxWidth: 1320,
-      padding: const EdgeInsets.fromLTRB(24, 24, 24, 160),
       child: LayoutBuilder(
         builder: (context, constraints) {
           final isWide = constraints.maxWidth >= 1040;
@@ -129,27 +128,13 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
                 title: 'Personal Information',
                 subtitle:
                     'Your professional identity, links, and recruiter-facing contact details.',
-                trailing: Wrap(
-                  spacing: 12,
-                  runSpacing: 12,
-                  children: [
-                    TextButton.icon(
-                      onPressed: () => _showEditProfileSheet(context, ref),
-                      icon: const Icon(Icons.edit_outlined, size: 16),
-                      label: const Text('Edit details'),
-                    ),
-                    TextButton(
-                      onPressed: () => _showMessage(
-                        context,
-                        'Password reset link sent in prototype mode.',
-                      ),
-                      child: const Text('Reset password'),
-                    ),
-                  ],
+                trailing: TextButton.icon(
+                  onPressed: () => _showEditProfileSheet(context, ref),
+                  icon: const Icon(Icons.edit_outlined, size: 16),
+                  label: const Text('Edit details'),
                 ),
                 child: LayoutBuilder(
                   builder: (context, sectionConstraints) {
-                    final columns = sectionConstraints.maxWidth >= 860 ? 3 : 2;
                     final fieldItems = [
                       _ProfileFieldData(icon: LucideIcons.mail, label: 'Email', value: profile.email),
                       _ProfileFieldData(icon: LucideIcons.phone, label: 'Phone', value: profile.phoneNumber),
@@ -159,15 +144,29 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
                       _ProfileFieldData(icon: LucideIcons.globe2, label: 'Website', value: profile.websiteUrl),
                     ];
 
+                    if (sectionConstraints.maxWidth < 500) {
+                      // Phone: single column list
+                      return Column(
+                        children: [
+                          for (var i = 0; i < fieldItems.length; i++) ...[
+                            _InfoFieldRow(data: fieldItems[i]),
+                            if (i < fieldItems.length - 1)
+                              Divider(height: 1, color: AppColors.stroke(Theme.of(context).brightness)),
+                          ],
+                        ],
+                      );
+                    }
+
+                    final columns = sectionConstraints.maxWidth >= 860 ? 3 : 2;
                     return GridView.builder(
                       itemCount: fieldItems.length,
                       shrinkWrap: true,
                       physics: const NeverScrollableScrollPhysics(),
                       gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
                         crossAxisCount: columns,
-                        crossAxisSpacing: 16,
-                        mainAxisSpacing: 16,
-                        childAspectRatio: sectionConstraints.maxWidth >= 860 ? 1.6 : 1.35,
+                        crossAxisSpacing: 14,
+                        mainAxisSpacing: 14,
+                        childAspectRatio: columns == 3 ? 1.6 : 1.4,
                       ),
                       itemBuilder: (context, index) => _InfoFieldTile(data: fieldItems[index]),
                     );
@@ -341,7 +340,7 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
                   builder: (context, sectionConstraints) {
                     final columns = sectionConstraints.maxWidth >= 980
                         ? 4
-                        : sectionConstraints.maxWidth >= 640
+                        : sectionConstraints.maxWidth >= 500
                             ? 2
                             : 1;
                     final cards = [
@@ -377,15 +376,26 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
                       ),
                     ];
 
+                    if (columns == 1) {
+                      return Column(
+                        children: [
+                          for (var i = 0; i < cards.length; i++) ...[
+                            _InsightMiniRow(data: cards[i]),
+                            if (i < cards.length - 1) const SizedBox(height: 12),
+                          ],
+                        ],
+                      );
+                    }
+
                     return GridView.builder(
                       itemCount: cards.length,
                       shrinkWrap: true,
                       physics: const NeverScrollableScrollPhysics(),
                       gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
                         crossAxisCount: columns,
-                        crossAxisSpacing: 16,
-                        mainAxisSpacing: 16,
-                        childAspectRatio: columns == 1 ? 2.2 : 1.18,
+                        crossAxisSpacing: 14,
+                        mainAxisSpacing: 14,
+                        childAspectRatio: columns == 4 ? 1.18 : 1.3,
                       ),
                       itemBuilder: (context, index) => _InsightMiniCard(data: cards[index]),
                     );
@@ -399,7 +409,7 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
                     'Appearance, visibility, exports, and support controls in one place.',
                 child: LayoutBuilder(
                   builder: (context, sectionConstraints) {
-                    final stacked = sectionConstraints.maxWidth < 920;
+                    final stacked = sectionConstraints.maxWidth < 720;
                     final appearance = _PreferenceCluster(
                       title: 'Appearance',
                       subtitle: 'Choose how SmartJob looks across your devices.',
@@ -505,14 +515,17 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
           if (!isWide) {
             return Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [sidebar, const SizedBox(height: 24), content],
+              children: [sidebar, const SizedBox(height: 20), content],
             );
           }
 
           return Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              SizedBox(width: 320, child: sidebar),
+              ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 320),
+                child: sidebar,
+              ),
               const SizedBox(width: 24),
               Expanded(child: content),
             ],
@@ -1071,8 +1084,10 @@ class _ProfileSidebar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final brightness = Theme.of(context).brightness;
+
     return Container(
-      padding: const EdgeInsets.all(24),
+      padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
         gradient: LinearGradient(colors: [studioTheme.sidebarGradientTop, studioTheme.sidebarGradientBottom], begin: Alignment.topLeft, end: Alignment.bottomRight),
         borderRadius: BorderRadius.circular(24),
@@ -1084,43 +1099,69 @@ class _ProfileSidebar extends StatelessWidget {
         children: [
           Center(
             child: Container(
-              width: 108,
-              height: 108,
+              width: 80,
+              height: 80,
               alignment: Alignment.center,
               decoration: const BoxDecoration(shape: BoxShape.circle, gradient: LinearGradient(colors: [AppColors.teal, AppColors.info], begin: Alignment.topLeft, end: Alignment.bottomRight)),
-              child: Text(profile.photoLabel, style: Theme.of(context).textTheme.displaySmall?.copyWith(color: Colors.white)),
+              child: Text(profile.photoLabel, style: Theme.of(context).textTheme.headlineMedium?.copyWith(color: Colors.white, fontWeight: FontWeight.w700)),
             ),
           ),
-          const SizedBox(height: 18),
-          Text(profile.fullName, style: Theme.of(context).textTheme.displaySmall),
-          const SizedBox(height: 6),
-          Text(profile.jobPreferences.targetRoles.isEmpty ? profile.headline : profile.jobPreferences.targetRoles.first, style: Theme.of(context).textTheme.headlineMedium),
-          const SizedBox(height: 8),
-          Text(profile.tagline.isEmpty ? profile.headline : profile.tagline, style: Theme.of(context).textTheme.bodyMedium?.copyWith(color: AppColors.subtext(Theme.of(context).brightness))),
+          const SizedBox(height: 14),
+          Text(
+            profile.fullName,
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+            style: Theme.of(context).textTheme.headlineMedium?.copyWith(fontWeight: FontWeight.w700),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            profile.jobPreferences.targetRoles.isEmpty ? profile.headline : profile.jobPreferences.targetRoles.first,
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+            style: Theme.of(context).textTheme.bodyMedium,
+          ),
+          if (profile.tagline.isNotEmpty && profile.tagline != profile.headline) ...[
+            const SizedBox(height: 4),
+            Text(
+              profile.tagline,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: Theme.of(context).textTheme.bodySmall?.copyWith(color: AppColors.subtext(brightness)),
+            ),
+          ],
+          const SizedBox(height: 16),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              _SidebarStatChip(label: 'Apps', value: '$applicationsSent'),
+              _SidebarStatChip(label: 'Strength', value: '$profileStrength%'),
+              _SidebarStatChip(label: 'CV', value: '$cvScore'),
+            ],
+          ),
+          const SizedBox(height: 16),
+          SizedBox(
+            width: double.infinity,
+            child: ElevatedButton.icon(onPressed: onEditProfile, icon: const Icon(Icons.edit_outlined, size: 16), label: const Text('Edit Profile')),
+          ),
+          const SizedBox(height: 10),
+          SizedBox(
+            width: double.infinity,
+            child: OutlinedButton.icon(onPressed: onDownloadCv, icon: const Icon(LucideIcons.download, size: 16), label: const Text('Download CV')),
+          ),
           const SizedBox(height: 20),
           Row(
             children: [
-              Expanded(child: _SidebarStatTile(label: 'Applications', value: '$applicationsSent')),
-              const SizedBox(width: 12),
-              Expanded(child: _SidebarStatTile(label: 'Strength', value: '$profileStrength%')),
-              const SizedBox(width: 12),
-              Expanded(child: _SidebarStatTile(label: 'CV score', value: '$cvScore')),
+              Expanded(
+                child: OutlinedButton.icon(onPressed: onLogout, icon: const Icon(LucideIcons.logOut, size: 16), label: const Text('Logout')),
+              ),
+              const SizedBox(width: 10),
+              TextButton(
+                onPressed: onDeleteAccount,
+                child: Text('Delete', style: TextStyle(color: AppColors.danger)),
+              ),
             ],
           ),
-          const SizedBox(height: 20),
-          ElevatedButton.icon(onPressed: onEditProfile, icon: const Icon(Icons.edit_outlined), label: const Text('Edit Profile')),
-          const SizedBox(height: 12),
-          OutlinedButton.icon(onPressed: onViewPublicProfile, icon: const Icon(Icons.public), label: const Text('View Public Profile')),
-          const SizedBox(height: 12),
-          OutlinedButton.icon(onPressed: onDownloadCv, icon: const Icon(LucideIcons.download), label: const Text('Download CV')),
-          const SizedBox(height: 28),
-          Text('Danger zone', style: Theme.of(context).textTheme.headlineMedium),
-          const SizedBox(height: 8),
-          Text('Account-level actions stay tucked away here.', style: Theme.of(context).textTheme.bodySmall?.copyWith(color: AppColors.subtext(Theme.of(context).brightness))),
-          const SizedBox(height: 14),
-          OutlinedButton.icon(onPressed: onLogout, icon: const Icon(LucideIcons.logOut), label: const Text('Logout')),
-          const SizedBox(height: 8),
-          TextButton.icon(onPressed: onDeleteAccount, icon: const Icon(LucideIcons.trash2, color: AppColors.danger), label: const Text('Delete account')),
         ],
       ),
     );
@@ -1138,19 +1179,22 @@ class _SectionShell extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final studioTheme = Theme.of(context).extension<SmartJobStudioTheme>()!;
+    final screenWidth = MediaQuery.sizeOf(context).width;
+    final padding = screenWidth < 400 ? 14.0 : 20.0;
+
     return Container(
-      padding: const EdgeInsets.all(24),
-      decoration: BoxDecoration(color: studioTheme.glassPanel, borderRadius: BorderRadius.circular(24), border: Border.all(color: studioTheme.glassBorder)),
+      padding: EdgeInsets.all(padding),
+      decoration: BoxDecoration(color: studioTheme.glassPanel, borderRadius: BorderRadius.circular(22), border: Border.all(color: studioTheme.glassBorder)),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
-        children: [SmartJobSectionHeader(title: title, subtitle: subtitle, trailing: trailing), const SizedBox(height: 20), child],
+        children: [SmartJobSectionHeader(title: title, subtitle: subtitle, trailing: trailing), const SizedBox(height: 16), child],
       ),
     );
   }
 }
 
-class _SidebarStatTile extends StatelessWidget {
-  const _SidebarStatTile({required this.label, required this.value});
+class _SidebarStatChip extends StatelessWidget {
+  const _SidebarStatChip({required this.label, required this.value});
 
   final String label;
   final String value;
@@ -1158,9 +1202,117 @@ class _SidebarStatTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      decoration: BoxDecoration(
+        color: AppColors.surface(Theme.of(context).brightness).withValues(alpha: 0.42),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: AppColors.stroke(Theme.of(context).brightness)),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(value, style: Theme.of(context).textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.w700)),
+          const SizedBox(width: 6),
+          Text(label, style: Theme.of(context).textTheme.bodySmall),
+        ],
+      ),
+    );
+  }
+}
+
+class _InfoFieldRow extends StatelessWidget {
+  const _InfoFieldRow({required this.data});
+
+  final _ProfileFieldData data;
+
+  @override
+  Widget build(BuildContext context) {
+    final brightness = Theme.of(context).brightness;
+    final hasValue = data.value.trim().isNotEmpty;
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 12),
+      child: Row(
+        children: [
+          Icon(data.icon, size: 16, color: AppColors.teal),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(data.label, style: Theme.of(context).textTheme.bodySmall?.copyWith(color: AppColors.subtext(brightness))),
+                const SizedBox(height: 2),
+                Text(
+                  hasValue ? data.value : 'Not added yet',
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                    color: hasValue ? null : AppColors.subtext(brightness),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _InsightMiniRow extends StatelessWidget {
+  const _InsightMiniRow({required this.data});
+
+  final _InsightCardData data;
+
+  @override
+  Widget build(BuildContext context) {
+    final brightness = Theme.of(context).brightness;
+
+    return Container(
       padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(color: AppColors.surface(Theme.of(context).brightness).withValues(alpha: 0.42), borderRadius: BorderRadius.circular(18), border: Border.all(color: AppColors.stroke(Theme.of(context).brightness))),
-      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Text(value, style: Theme.of(context).textTheme.headlineMedium), const SizedBox(height: 4), Text(label, style: Theme.of(context).textTheme.bodySmall)]),
+      decoration: BoxDecoration(
+        color: AppColors.surfaceMuted(brightness).withValues(alpha: 0.62),
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: AppColors.stroke(brightness)),
+      ),
+      child: Row(
+        children: [
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(data.title, style: Theme.of(context).textTheme.bodySmall),
+                const SizedBox(height: 2),
+                Text(data.value, style: Theme.of(context).textTheme.headlineMedium),
+              ],
+            ),
+          ),
+          const SizedBox(width: 12),
+          SizedBox(
+            width: 100,
+            child: Column(
+              children: [
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(999),
+                  child: LinearProgressIndicator(
+                    value: data.progress.clamp(0.0, 1.0),
+                    minHeight: 6,
+                    backgroundColor: AppColors.surface(brightness),
+                    valueColor: AlwaysStoppedAnimation<Color>(data.color),
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  data.subtitle,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: Theme.of(context).textTheme.labelSmall?.copyWith(color: AppColors.subtext(brightness)),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
     );
   }
 }
@@ -1207,10 +1359,27 @@ class _PreferenceCluster extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final brightness = Theme.of(context).brightness;
+    final screenWidth = MediaQuery.sizeOf(context).width;
+    final padding = screenWidth < 400 ? 12.0 : 16.0;
+
     return Container(
-      padding: const EdgeInsets.all(18),
-      decoration: BoxDecoration(color: AppColors.surfaceMuted(Theme.of(context).brightness).withValues(alpha: 0.58), borderRadius: BorderRadius.circular(22), border: Border.all(color: AppColors.stroke(Theme.of(context).brightness))),
-      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Text(title, style: Theme.of(context).textTheme.headlineMedium), const SizedBox(height: 6), Text(subtitle, style: Theme.of(context).textTheme.bodySmall?.copyWith(color: AppColors.subtext(Theme.of(context).brightness))), const SizedBox(height: 14), child]),
+      padding: EdgeInsets.all(padding),
+      decoration: BoxDecoration(
+        color: AppColors.surfaceMuted(brightness).withValues(alpha: 0.58),
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: AppColors.stroke(brightness)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(title, style: Theme.of(context).textTheme.headlineMedium),
+          const SizedBox(height: 4),
+          Text(subtitle, style: Theme.of(context).textTheme.bodySmall?.copyWith(color: AppColors.subtext(brightness))),
+          const SizedBox(height: 12),
+          child,
+        ],
+      ),
     );
   }
 }

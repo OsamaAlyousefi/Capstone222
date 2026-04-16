@@ -17,6 +17,7 @@ import '../../router/app_router.dart';
 import '../../services/supabase_data_service.dart';
 import '../../theme/app_colors.dart';
 import '../shared/widgets/smart_job_ui.dart';
+import 'widgets/cv_templates.dart';
 
 class CVScreen extends ConsumerStatefulWidget {
   const CVScreen({super.key});
@@ -34,7 +35,6 @@ class _CVScreenState extends ConsumerState<CVScreen> {
   bool _isExportingPdf = false;
   bool _isExportingWord = false;
   String? _cvUrl;
-  String? _cvLoadError;
   double? _uploadProgress;
   String _uploadStageLabel = 'Preparing upload...';
   // Downloaded bytes are used for SfPdfViewer.memory() which is more
@@ -178,7 +178,6 @@ class _CVScreenState extends ConsumerState<CVScreen> {
 
       setState(() {
         _cvUrl = cvUrl;
-        _cvLoadError = null;
       });
 
       // Try to download the actual bytes so we can use SfPdfViewer.memory(),
@@ -191,7 +190,6 @@ class _CVScreenState extends ConsumerState<CVScreen> {
     } catch (error) {
       if (!mounted) return;
       setState(() {
-        _cvLoadError = 'Could not load your saved CV.';
         _isLoadingCv = false;
       });
     }
@@ -273,13 +271,6 @@ class _CVScreenState extends ConsumerState<CVScreen> {
       );
     }
 
-    if (_cvUrl == null && displayBytes == null && !profile.hasUploadedCv) {
-      return _UploadEmptyState(
-        onUpload: uploadCV,
-        onBuildInstead: () => context.go(AppRoute.cvSetup),
-      );
-    }
-
     // Use memory-based viewer whenever bytes are available — it renders
     // reliably on Android without the dark platform-view painting issue.
     if (displayBytes != null) {
@@ -298,11 +289,17 @@ class _CVScreenState extends ConsumerState<CVScreen> {
       );
     }
 
-    return _NonPdfPreviewState(
-      fileName: cv.fileName,
-      mimeType: cv.uploadedCvMimeType,
-      summary: _cvLoadError ?? cv.parsedSummary,
-      onUploadPdf: uploadCV,
+    // Live template-based preview built from profile data.
+    final previewData = _buildPreviewData(profile);
+    return _LiveCvPreview(
+      zoom: _zoom,
+      previewData: previewData,
+      sectionOrder: cv.sectionOrder,
+      fontFamily: cv.fontFamily,
+      accentColorHex: cv.accentColorHex,
+      selectedTemplate: cv.selectedTemplate,
+      onUpload: uploadCV,
+      onBuild: () => context.go(AppRoute.cvSetup),
     );
   }
 
@@ -322,7 +319,11 @@ class _CVScreenState extends ConsumerState<CVScreen> {
       'title': profile.headline.isEmpty
           ? 'Add your headline'
           : profile.headline,
-      'summary': profile.cvInsight.parsedSummary,
+      'summary': profile.tagline.isNotEmpty
+          ? profile.tagline
+          : profile.cvInsight.parsedSummary.isNotEmpty
+              ? profile.cvInsight.parsedSummary
+              : 'Professional summary',
       'contact': contactLines,
       'skills': profile.skills.isEmpty
           ? const ['Flutter', 'Dart', 'Firebase', 'REST APIs', 'Figma']
@@ -475,7 +476,6 @@ class _CVScreenState extends ConsumerState<CVScreen> {
 
       setState(() {
         _cvUrl = publicUrl;
-        _cvLoadError = null;
         _uploadProgress = 1;
         _uploadStageLabel = 'CV uploaded successfully.';
       });
@@ -490,10 +490,6 @@ class _CVScreenState extends ConsumerState<CVScreen> {
       if (!mounted) {
         return;
       }
-
-      setState(() {
-        _cvLoadError = 'Upload failed: $error';
-      });
 
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
@@ -1511,7 +1507,7 @@ class _PreviewShell extends StatelessWidget {
                   const SizedBox(height: 6),
                   Text(
                     fileName.isEmpty
-                        ? 'Upload a PDF CV to see the real document here.'
+                        ? 'Preview your CV live — upload a PDF or build from your profile.'
                         : 'Rendering $fileName directly inside your SmartJob workspace.',
                     style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                           color: AppColors.subtext(brightness),
@@ -1862,180 +1858,74 @@ class _PreviewLoadingState extends StatelessWidget {
   }
 }
 
-class _UploadEmptyState extends StatelessWidget {
-  const _UploadEmptyState({
+class _LiveCvPreview extends StatelessWidget {
+  const _LiveCvPreview({
+    required this.zoom,
+    required this.previewData,
+    required this.sectionOrder,
+    required this.fontFamily,
+    required this.accentColorHex,
+    required this.selectedTemplate,
     required this.onUpload,
-    required this.onBuildInstead,
+    required this.onBuild,
   });
 
+  final double zoom;
+  final Map<String, dynamic> previewData;
+  final List<String> sectionOrder;
+  final String fontFamily;
+  final String accentColorHex;
+  final String selectedTemplate;
   final VoidCallback onUpload;
-  final VoidCallback onBuildInstead;
+  final VoidCallback onBuild;
 
-  @override
-  Widget build(BuildContext context) {
-    final brightness = Theme.of(context).brightness;
-
-    return Container(
-      height: 680,
-      padding: const EdgeInsets.all(28),
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(22),
-        border: Border.all(
-          color: AppColors.stroke(brightness),
-          width: 1.3,
-        ),
-        gradient: LinearGradient(
-          colors: [
-            AppColors.surfaceMuted(brightness),
-            AppColors.surface(brightness),
-          ],
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-        ),
-      ),
-      child: Center(
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 520),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Container(
-                width: 92,
-                height: 92,
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  color: AppColors.midnight.withValues(alpha: 0.12),
-                ),
-                child: const Icon(
-                  Icons.upload_file_rounded,
-                  size: 42,
-                  color: AppColors.midnight,
-                ),
-              ),
-              const SizedBox(height: 18),
-              Text(
-                'Choose how you want to start',
-                textAlign: TextAlign.center,
-                style: Theme.of(context).textTheme.displaySmall,
-              ),
-              const SizedBox(height: 10),
-              Text(
-                'Upload your existing PDF CV for instant analysis, or start with SmartJob AI and build one from your profile details.',
-                textAlign: TextAlign.center,
-                style: Theme.of(context).textTheme.bodyLarge?.copyWith(
-                      color: AppColors.subtext(brightness),
-                    ),
-              ),
-              const SizedBox(height: 10),
-              Text(
-                'Supports .pdf, .doc, and .docx uploads.',
-                textAlign: TextAlign.center,
-                style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                      color: AppColors.subtext(brightness),
-                    ),
-              ),
-              const SizedBox(height: 20),
-              Wrap(
-                alignment: WrapAlignment.center,
-                spacing: 12,
-                runSpacing: 12,
-                children: [
-                  ElevatedButton.icon(
-                    onPressed: onUpload,
-                    icon: const Icon(Icons.file_upload_outlined),
-                    label: const Text('Upload Existing CV'),
-                  ),
-                  OutlinedButton.icon(
-                    onPressed: onBuildInstead,
-                    icon: const Icon(Icons.auto_awesome_outlined),
-                    label: const Text('Build with AI'),
-                  ),
-                ],
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
+  Color _hexToColor(String value, Color fallback) {
+    final normalized = value.replaceAll('#', '').trim();
+    if (normalized.length != 6) return fallback;
+    final parsed = int.tryParse('FF$normalized', radix: 16);
+    return parsed == null ? fallback : Color(parsed);
   }
-}
-
-class _NonPdfPreviewState extends StatelessWidget {
-  const _NonPdfPreviewState({
-    required this.fileName,
-    required this.mimeType,
-    required this.summary,
-    required this.onUploadPdf,
-  });
-
-  final String fileName;
-  final String mimeType;
-  final String summary;
-  final VoidCallback onUploadPdf;
 
   @override
   Widget build(BuildContext context) {
-    final brightness = Theme.of(context).brightness;
+    final accentColor = _hexToColor(accentColorHex, const Color(0xFF5D8CC3));
 
-    return Container(
-      height: 680,
-      padding: const EdgeInsets.all(26),
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(22),
-        color: AppColors.surfaceMuted(brightness),
-        border: Border.all(color: AppColors.stroke(brightness)),
-      ),
-      child: Center(
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 560),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Container(
-                width: 88,
-                height: 88,
-                decoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(24),
-                  color: AppColors.sand.withValues(alpha: 0.16),
-                ),
-                child: const Icon(
-                  Icons.description_outlined,
-                  size: 42,
-                  color: AppColors.sand,
-                ),
-              ),
-              const SizedBox(height: 16),
-              Text(
-                fileName,
-                textAlign: TextAlign.center,
-                style: Theme.of(context).textTheme.headlineMedium,
-              ),
-              const SizedBox(height: 8),
-              Text(
-                'This CV is connected, but SmartJob can only render inline preview for uploaded PDF files right now.',
-                textAlign: TextAlign.center,
-                style: Theme.of(context).textTheme.bodyLarge?.copyWith(
-                      color: AppColors.subtext(brightness),
-                    ),
-              ),
-              const SizedBox(height: 14),
-              _InfoBadge(label: 'Type', value: mimeType),
-              const SizedBox(height: 18),
-              Text(
-                summary,
-                textAlign: TextAlign.center,
-                style: Theme.of(context).textTheme.bodyMedium,
-              ),
-              const SizedBox(height: 18),
-              OutlinedButton.icon(
-                onPressed: onUploadPdf,
-                icon: const Icon(Icons.picture_as_pdf_outlined),
-                label: const Text('Upload PDF for live preview'),
-              ),
-            ],
-          ),
-        ),
-      ),
+    final items = <String, List<String>>{};
+    for (final section in sectionOrder) {
+      items[section] = switch (section) {
+        'summary' => [previewData['summary'].toString()],
+        'skills' => (previewData['skills'] as List<dynamic>)
+            .map((e) => e.toString())
+            .toList(),
+        'experience' => (previewData['experience'] as List<dynamic>)
+            .map((e) => e.toString())
+            .toList(),
+        'education' => (previewData['education'] as List<dynamic>)
+            .map((e) => e.toString())
+            .toList(),
+        'projects' => (previewData['projects'] as List<dynamic>)
+            .map((e) => e.toString())
+            .toList(),
+        _ => const <String>[],
+      };
+    }
+
+    final data = CvPreviewData(
+      name: previewData['name'].toString(),
+      title: previewData['title'].toString(),
+      summary: previewData['summary'].toString(),
+      contact:
+          (previewData['contact'] as List<dynamic>).take(5).map((e) => e.toString()).toList(),
+      sectionOrder: sectionOrder,
+      items: items,
+    );
+
+    return CvTemplateBuilder(
+      template: CvTemplate.fromName(selectedTemplate),
+      data: data,
+      accentColor: accentColor,
+      fontFamily: fontFamily,
+      zoom: zoom,
     );
   }
 }
@@ -2500,34 +2390,6 @@ class _ImprovementTile extends StatelessWidget {
             ],
           ),
         ),
-      ),
-    );
-  }
-}
-
-class _InfoBadge extends StatelessWidget {
-  const _InfoBadge({
-    required this.label,
-    required this.value,
-  });
-
-  final String label;
-  final String value;
-
-  @override
-  Widget build(BuildContext context) {
-    final brightness = Theme.of(context).brightness;
-
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(999),
-        color: AppColors.surface(brightness),
-        border: Border.all(color: AppColors.stroke(brightness)),
-      ),
-      child: Text(
-        '$label: $value',
-        style: Theme.of(context).textTheme.labelLarge,
       ),
     );
   }
