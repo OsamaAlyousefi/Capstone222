@@ -643,11 +643,14 @@ class _ApplicationCard extends StatelessWidget {
                           color: AppColors.subtext(brightness),
                         ),
                         const SizedBox(width: 4),
-                        Text(
-                          application.location,
-                          style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                                color: AppColors.subtext(brightness),
-                              ),
+                        Flexible(
+                          child: Text(
+                            application.location,
+                            overflow: TextOverflow.ellipsis,
+                            style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                                  color: AppColors.subtext(brightness),
+                                ),
+                          ),
                         ),
                         const SizedBox(width: 12),
                         Icon(
@@ -656,11 +659,14 @@ class _ApplicationCard extends StatelessWidget {
                           color: AppColors.subtext(brightness),
                         ),
                         const SizedBox(width: 4),
-                        Text(
-                          application.appliedLabel,
-                          style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                                color: AppColors.subtext(brightness),
-                              ),
+                        Flexible(
+                          child: Text(
+                            application.appliedLabel,
+                            overflow: TextOverflow.ellipsis,
+                            style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                                  color: AppColors.subtext(brightness),
+                                ),
+                          ),
                         ),
                       ],
                     ),

@@ -1179,7 +1179,7 @@ class _HeaderCard extends StatelessWidget {
                         ),
                         const SizedBox(height: 6),
                         Text(
-                          'A cleaner, recruiter-grade CV space for uploads, live preview, scoring, and export.',
+                          'Manage and export your CV.',
                           style:
                               Theme.of(context).textTheme.bodyMedium?.copyWith(
                                     color: AppColors.subtext(brightness),
@@ -1195,20 +1195,6 @@ class _HeaderCard extends StatelessWidget {
                 spacing: 10,
                 runSpacing: 10,
                 children: [
-                  _StatusPill(
-                    icon:
-                        profile.hasUploadedCv ? Icons.cloud_done : Icons.upload,
-                    label: profile.hasUploadedCv ? 'Uploaded' : 'Awaiting upload',
-                  ),
-                  _StatusPill(
-                    icon: isUploading ? Icons.sync : Icons.check_circle_outline,
-                    label: isUploading ? 'Saving...' : 'Autosaved',
-                    highlighted: isUploading,
-                  ),
-                  _StatusPill(
-                    icon: Icons.schedule,
-                    label: _lastEditedAgo(profile.cvInsight.lastEditedAtIso),
-                  ),
                   _StatusPill(
                     icon: Icons.favorite_border,
                     label: status.label,

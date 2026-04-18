@@ -27,6 +27,7 @@ class Job {
     this.isSaved = false,
     this.feedback = JobFeedback.none,
     this.hasEasyApply = true,
+    this.applyUrl = '',
   });
 
   final String id;
@@ -48,6 +49,7 @@ class Job {
   final bool isSaved;
   final JobFeedback feedback;
   final bool hasEasyApply;
+  final String applyUrl;
 
   Job copyWith({
     String? id,
@@ -69,6 +71,7 @@ class Job {
     bool? isSaved,
     JobFeedback? feedback,
     bool? hasEasyApply,
+    String? applyUrl,
   }) {
     return Job(
       id: id ?? this.id,
@@ -90,6 +93,7 @@ class Job {
       isSaved: isSaved ?? this.isSaved,
       feedback: feedback ?? this.feedback,
       hasEasyApply: hasEasyApply ?? this.hasEasyApply,
+      applyUrl: applyUrl ?? this.applyUrl,
     );
   }
 }

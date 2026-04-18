@@ -9,7 +9,6 @@ import '../presentation/auth/register_screen.dart';
 import '../presentation/cv/cv_page.dart';
 import '../presentation/cv/cv_setup_screen.dart';
 import '../presentation/home/home_screen.dart';
-import '../presentation/inbox/inbox_screen.dart';
 import '../presentation/main_shell/main_shell.dart';
 import '../presentation/onboarding/onboarding_screen.dart';
 import '../presentation/profile/profile_screen.dart';
@@ -22,7 +21,6 @@ abstract class AppRoute {
   static const cv = '/cv';
   static const cvSetup = '/cv-setup';
   static const applications = '/applications';
-  static const inbox = '/inbox';
   static const profile = '/profile';
 }
 
@@ -90,10 +88,6 @@ final goRouterProvider = Provider<GoRouter>((ref) {
           GoRoute(
             path: AppRoute.applications,
             builder: (context, state) => const ApplicationsScreen(),
-          ),
-          GoRoute(
-            path: AppRoute.inbox,
-            builder: (context, state) => const InboxScreen(),
           ),
           GoRoute(
             path: AppRoute.profile,

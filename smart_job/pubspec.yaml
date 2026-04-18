@@ -48,6 +48,7 @@ dependencies:
   hive_flutter: ^1.1.0
   supabase_flutter: ^2.0.0
   http: ^1.4.0
+  url_launcher: ^6.3.0
 
 dev_dependencies:
   flutter_test:
@@ -73,6 +74,7 @@ flutter:
 
   assets:
     - assets/.env
+    - assets/images/logo.png
 
   # To add assets to your application, add an assets section, like this:
   # assets:

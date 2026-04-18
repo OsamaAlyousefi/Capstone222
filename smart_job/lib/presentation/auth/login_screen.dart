@@ -246,7 +246,7 @@ class _AuthHero extends StatelessWidget {
         ).animate().fade().slideY(begin: 0.04),
         const SizedBox(height: 16),
         Text(
-          'SmartJob combines your CV builder, personalized job feed, application tracker, and recruiter inbox into one calm, polished workflow.',
+          'SmartJob combines your CV builder, personalized job feed, and application tracker into one calm, polished workflow.',
           textAlign: textAlign,
           style: textTheme.bodyLarge?.copyWith(
             color: AppColors.subtext(Theme.of(context).brightness),
@@ -267,8 +267,8 @@ class _AuthHero extends StatelessWidget {
               text: 'Smarter job matching',
             ),
             _FeaturePill(
-              icon: LucideIcons.mailCheck,
-              text: 'Unified recruiter inbox',
+              icon: LucideIcons.barChart3,
+              text: 'Application tracking',
             ),
           ],
         ).animate().fade(delay: 140.ms),

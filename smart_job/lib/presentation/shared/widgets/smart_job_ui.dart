@@ -174,7 +174,7 @@ class SmartJobAppLogo extends StatelessWidget {
     super.key,
     this.showWordmark = true,
     this.centered = false,
-    this.size = 52,
+    this.size = 80,
   });
 
   final bool showWordmark;
@@ -183,73 +183,13 @@ class SmartJobAppLogo extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final textTheme = Theme.of(context).textTheme;
-    final row = Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Container(
-          width: size,
-          height: size,
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(size * 0.32),
-            gradient: const LinearGradient(
-              colors: [AppColors.midnight, AppColors.teal],
-              begin: Alignment.topLeft,
-              end: Alignment.bottomRight,
-            ),
-            boxShadow: const [
-              BoxShadow(
-                color: Color(0x2519324A),
-                blurRadius: 18,
-                offset: Offset(0, 10),
-              ),
-            ],
-          ),
-          child: Stack(
-            alignment: Alignment.center,
-            children: const [
-              Icon(
-                LucideIcons.sparkles,
-                color: Colors.white,
-                size: 20,
-              ),
-              Positioned(
-                right: 12,
-                top: 12,
-                child: DecoratedBox(
-                  decoration: BoxDecoration(
-                    color: AppColors.sand,
-                    shape: BoxShape.circle,
-                  ),
-                  child: SizedBox(width: 8, height: 8),
-                ),
-              ),
-            ],
-          ),
-        ),
-        if (showWordmark) ...[
-          const SizedBox(width: 14),
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                'SmartJob',
-                style: textTheme.displaySmall?.copyWith(height: 1),
-              ),
-              const SizedBox(height: 4),
-              Text(
-                'Career workspace',
-                style: textTheme.bodySmall?.copyWith(
-                  color: AppColors.subtext(Theme.of(context).brightness),
-                ),
-              ),
-            ],
-          ),
-        ],
-      ],
+    final logo = Image.asset(
+      'assets/images/logo.png',
+      height: size,
+      fit: BoxFit.contain,
     );
 
-    return centered ? Center(child: row) : row;
+    return centered ? Center(child: logo) : logo;
   }
 }
 
@@ -700,29 +640,17 @@ Color messageTypeColor(MessageType type) {
 
 Color jobMatchColor(double score) {
   final percentage = (score * 100).round();
-  if (percentage >= 90) {
-    return AppColors.success;
-  }
-  if (percentage >= 75) {
-    return AppColors.teal;
-  }
-  if (percentage >= 50) {
-    return AppColors.danger;
-  }
+  if (percentage >= 80) return AppColors.success;
+  if (percentage >= 60) return AppColors.teal;
+  if (percentage >= 40) return AppColors.sand;
   return AppColors.coral;
 }
 
 String jobMatchLabel(double score) {
   final percentage = (score * 100).round();
-  if (percentage >= 90) {
-    return 'Excellent match';
-  }
-  if (percentage >= 75) {
-    return 'Strong match';
-  }
-  if (percentage >= 50) {
-    return 'Weak match';
-  }
+  if (percentage >= 80) return 'Excellent match';
+  if (percentage >= 60) return 'Strong match';
+  if (percentage >= 40) return 'Good match';
   return 'Low match';
 }
 

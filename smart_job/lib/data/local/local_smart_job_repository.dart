@@ -7,7 +7,6 @@ import '../../domain/models/job.dart';
 import '../../domain/models/message.dart';
 import '../../domain/models/profile.dart';
 import '../database/smart_job_database.dart';
-import '../mock/mock_smart_job_repository.dart';
 import '../remote/smart_job_remote_sync.dart';
 import '../repositories/smart_job_repository.dart';
 
@@ -19,16 +18,14 @@ class LocalSmartJobRepository implements SmartJobRepository {
 
   final SmartJobDatabase _database;
   final SmartJobRemoteSync? _remoteSync;
-  final MockSmartJobRepository _seedRepository = const MockSmartJobRepository();
 
   @override
   SmartJobAccountData initialAccount({ThemeMode themeMode = ThemeMode.system}) {
-    final profile = _seedRepository.initialProfile().copyWith(themeMode: themeMode);
     return SmartJobAccountData(
-      profile: profile,
-      jobs: _seedRepository.jobs(),
-      applications: _seedRepository.applications(),
-      messages: _seedRepository.messages(),
+      profile: _blankProfile(themeMode: themeMode),
+      jobs: const [],
+      applications: const [],
+      messages: const [],
     );
   }
 
@@ -42,22 +39,12 @@ class LocalSmartJobRepository implements SmartJobRepository {
     final stored = _database.readAccount(normalizedEmail);
     if (stored != null) {
       final account = _accountFromMap(stored);
-      // Backfill seed data for existing accounts created before seed fix.
-      if (account.messages.isEmpty || account.applications.isEmpty) {
-        final backfilled = SmartJobAccountData(
-          profile: account.profile,
-          jobs: account.jobs.isEmpty ? _seedRepository.jobs() : account.jobs,
-          applications: account.applications.isEmpty
-              ? _seedRepository.applications()
-              : account.applications,
-          messages: account.messages.isEmpty
-              ? _seedRepository.messages()
-              : account.messages,
-        );
-        saveAccount(backfilled);
-        return backfilled;
+      // Strip legacy mock data that was seeded before the real-data migration.
+      final cleaned = _stripMockData(account);
+      if (cleaned != account) {
+        saveAccount(cleaned);
       }
-      return account;
+      return cleaned;
     }
 
     final created = _newAccountData(
@@ -160,67 +147,114 @@ class LocalSmartJobRepository implements SmartJobRepository {
     final resolvedName =
         fullName != null && fullName.trim().isNotEmpty ? fullName.trim() : _nameFromEmail(email);
 
-    final profile = _seedRepository.initialProfile().copyWith(
+    final profile = _blankProfile(themeMode: themeMode).copyWith(
           fullName: resolvedName,
           email: email,
-          phoneNumber: '',
-          location: '',
-          headline: 'Flutter developer building polished, recruiter-ready product experiences.',
-          tagline: 'SmartJob candidate workspace',
           photoLabel: _initialsFromName(resolvedName),
           smartInboxAlias: '${email.split('@').first}@inbox.smartjob.app',
-          hasCompletedOnboarding: false,
-          hasUploadedCv: false,
-          skills: const [],
-          education: const [],
-          experience: const [],
-          certifications: const [],
-          projects: const [],
-          languages: const [],
-          links: const [],
-          awards: const [],
-          volunteerWork: const [],
-          interests: const [],
-          linkedInUrl: '',
-          portfolioUrl: '',
-          websiteUrl: '',
-          themeMode: themeMode ?? ThemeMode.system,
-          cvInsight: const CvInsight(
-            fileName: 'SmartJob_CV_Draft.pdf',
-            lastUpdatedLabel: 'Draft ready to build',
-            completionScore: 18,
-            atsScore: 54,
-            keywordMatchScore: 42,
-            missingSections: ['Experience', 'Projects', 'Skills'],
-            improvementTips: [
-              'Start with your strongest project and add the tools you used.',
-              'Turn coursework into proof of impact with outcomes and metrics.',
-              'Add links to GitHub, LinkedIn, or a portfolio for faster shortlisting.',
-            ],
-            missingKeywords: ['State management', 'REST APIs', 'User testing'],
-            highlightedStrengths: [
-              'Student-friendly builder',
-              'Structured profile guidance',
-              'ATS scoring support',
-            ],
-            selectedTemplate: 'Classic',
-            parsedSummary:
-                'Your SmartJob CV draft is ready. Add sections to improve ATS strength and recruiter trust.',
-            remoteStoragePath: '',
-            uploadedCvBase64: '',
-            uploadedCvMimeType: '',
-            accentColorHex: '#5D8CC3',
-            fontFamily: 'Inter',
-            sectionOrder: defaultCvSectionOrder,
-            lastEditedAtIso: '',
-          ),
         );
 
     return SmartJobAccountData(
       profile: profile,
-      jobs: _seedRepository.jobs(),
-      applications: _seedRepository.applications(),
-      messages: _seedRepository.messages(),
+      jobs: const [],
+      applications: const [],
+      messages: const [],
+    );
+  }
+
+  UserProfile _blankProfile({ThemeMode? themeMode}) {
+    return UserProfile(
+      fullName: '',
+      email: '',
+      phoneNumber: '',
+      location: '',
+      headline: '',
+      tagline: '',
+      photoLabel: 'SJ',
+      smartInboxAlias: '',
+      hasCompletedOnboarding: false,
+      hasUploadedCv: false,
+      skills: const [],
+      education: const [],
+      experience: const [],
+      certifications: const [],
+      projects: const [],
+      languages: const [],
+      links: const [],
+      awards: const [],
+      volunteerWork: const [],
+      interests: const [],
+      linkedInUrl: '',
+      portfolioUrl: '',
+      websiteUrl: '',
+      jobPreferences: const JobPreferences(
+        targetRoles: [],
+        preferredLocations: ['Dubai', 'Remote', 'Abu Dhabi'],
+        preferredWorkModes: [WorkMode.remote, WorkMode.hybrid],
+        preferredJobTypes: [JobType.fullTime, JobType.internship],
+        preferredLevels: [ExperienceLevel.junior, ExperienceLevel.mid],
+        salaryRange: '',
+        salaryExpectation: 6,
+        wantsNotifications: true,
+        emailFrequency: AlertFrequency.daily,
+        pushNotificationsEnabled: true,
+        emailNotificationsEnabled: true,
+        hasWorkAuthorization: true,
+        openToRelocation: true,
+      ),
+      cvInsight: const CvInsight(
+        fileName: 'SmartJob_CV_Draft.pdf',
+        lastUpdatedLabel: 'Draft ready to build',
+        completionScore: 0,
+        atsScore: 0,
+        keywordMatchScore: 0,
+        missingSections: ['Experience', 'Projects', 'Skills'],
+        improvementTips: [
+          'Start with your strongest project and add the tools you used.',
+          'Turn coursework into proof of impact with outcomes and metrics.',
+          'Add links to GitHub, LinkedIn, or a portfolio for faster shortlisting.',
+        ],
+        missingKeywords: [],
+        highlightedStrengths: [],
+        selectedTemplate: 'Classic',
+        parsedSummary: '',
+        remoteStoragePath: '',
+        uploadedCvBase64: '',
+        uploadedCvMimeType: '',
+        accentColorHex: '#5D8CC3',
+        fontFamily: 'Inter',
+        sectionOrder: defaultCvSectionOrder,
+        lastEditedAtIso: '',
+      ),
+      themeMode: themeMode ?? ThemeMode.system,
+      notificationsEnabled: true,
+      privacyModeEnabled: false,
+      publicProfileEnabled: true,
+      hideContactInfo: false,
+    );
+  }
+
+  /// Removes legacy mock/seed data that was injected before the real-data
+  /// migration. Returns the same instance if nothing changed.
+  SmartJobAccountData _stripMockData(SmartJobAccountData account) {
+    const mockJobIds = {'job_1', 'job_2', 'job_3', 'job_4', 'job_5', 'job_6'};
+    const mockAppIds = {'app_1', 'app_2', 'app_3', 'app_4', 'app_5'};
+    const mockMsgIds = {'msg_1', 'msg_2', 'msg_3', 'msg_4'};
+
+    final cleanJobs = account.jobs.where((j) => !mockJobIds.contains(j.id)).toList();
+    final cleanApps = account.applications.where((a) => !mockAppIds.contains(a.id)).toList();
+    final cleanMsgs = account.messages.where((m) => !mockMsgIds.contains(m.id)).toList();
+
+    if (cleanJobs.length == account.jobs.length &&
+        cleanApps.length == account.applications.length &&
+        cleanMsgs.length == account.messages.length) {
+      return account;
+    }
+
+    return account.copyWith(
+      jobs: cleanJobs,
+      applications: cleanApps,
+      messages: cleanMsgs,
     );
   }
 
@@ -468,6 +502,7 @@ class LocalSmartJobRepository implements SmartJobRepository {
       'isSaved': job.isSaved,
       'feedback': job.feedback.name,
       'hasEasyApply': job.hasEasyApply,
+      'applyUrl': job.applyUrl,
     };
   }
 
@@ -492,6 +527,7 @@ class LocalSmartJobRepository implements SmartJobRepository {
       isSaved: map['isSaved'] as bool? ?? false,
       feedback: JobFeedback.values.byName(map['feedback'] as String? ?? JobFeedback.none.name),
       hasEasyApply: map['hasEasyApply'] as bool? ?? true,
+      applyUrl: map['applyUrl'] as String? ?? '',
     );
   }
 

@@ -2,31 +2,80 @@
 import 'package:flutter_animate/flutter_animate.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:lucide_icons/lucide_icons.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../../application/controllers/smart_job_controller.dart';
 import '../../domain/models/job.dart';
+import '../../services/job_summary_service.dart';
 import '../../services/supabase_data_service.dart';
 import '../../theme/app_colors.dart';
 import '../shared/widgets/smart_job_ui.dart';
 import 'job_details_screen.dart';
 import 'widgets/job_card.dart';
 
-class HomeScreen extends ConsumerWidget {
+class HomeScreen extends ConsumerStatefulWidget {
   const HomeScreen({super.key});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<HomeScreen> createState() => _HomeScreenState();
+}
+
+class _HomeScreenState extends ConsumerState<HomeScreen> {
+  bool _hasSearched = false;
+  bool _isLoadingJobs = false;
+  bool _isLoadingSlow = false;
+
+  @override
+  void initState() {
+    super.initState();
+    // Fetch real jobs from APIs on first load.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!_hasSearched) {
+        _hasSearched = true;
+        _fetchJobs();
+      }
+    });
+  }
+
+  Future<void> _fetchJobs() async {
+    if (!mounted) return;
+    setState(() {
+      _isLoadingJobs = true;
+      _isLoadingSlow = false;
+    });
+
+    // Show extra message after 10 seconds.
+    Future.delayed(const Duration(seconds: 10), () {
+      if (mounted && _isLoadingJobs) {
+        setState(() => _isLoadingSlow = true);
+      }
+    });
+
+    try {
+      await ref.read(smartJobControllerProvider.notifier).searchExternalJobs();
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isLoadingJobs = false;
+          _isLoadingSlow = false;
+        });
+      }
+    }
+
+    // Auto-summarize first 5 jobs in the background after list is shown.
+    final jobs = ref.read(filteredJobsProvider);
+    if (jobs.isNotEmpty) {
+      JobSummaryService.summarizeInBackground(jobs);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final ref = this.ref;
     final state = ref.watch(smartJobControllerProvider);
     final profile = state.profile;
     final filteredJobs = ref.watch(filteredJobsProvider);
     final savedJobs = ref.watch(savedJobsProvider);
-
-    final interestedCount = state.jobs
-        .where((job) => job.feedback == JobFeedback.interested)
-        .length;
-    final notInterestedCount = state.jobs
-        .where((job) => job.feedback == JobFeedback.notInterested)
-        .length;
 
     final jobsFeed = [...filteredJobs]
       ..sort((a, b) {
@@ -65,7 +114,7 @@ class HomeScreen extends ConsumerWidget {
                           ),
                           const SizedBox(height: 10),
                           Text(
-                            'A cleaner browsing flow is ready. Swipe to triage, open any role as a full page, and keep the feed focused on the jobs that fit best.',
+                            'Find jobs that match your skills.',
                             style: Theme.of(context).textTheme.bodyLarge?.copyWith(
                                   color: AppColors.subtext(Theme.of(context).brightness),
                                 ),
@@ -91,16 +140,6 @@ class HomeScreen extends ConsumerWidget {
                       label: 'saved',
                       value: '${savedJobs.length}',
                       icon: LucideIcons.bookmark,
-                    ),
-                    SmartJobMetricPill(
-                      label: 'interested',
-                      value: '$interestedCount',
-                      icon: LucideIcons.trendingUp,
-                    ),
-                    SmartJobMetricPill(
-                      label: 'skip',
-                      value: '$notInterestedCount',
-                      icon: LucideIcons.circleOff,
                     ),
                   ],
                 ),
@@ -164,30 +203,70 @@ class HomeScreen extends ConsumerWidget {
             ).animate().fade(delay: 120.ms),
           ],
           const SizedBox(height: 22),
-          SmartJobSectionHeader(
-            title: 'Jobs feed',
-            subtitle:
-                'Swipe right to save, swipe left to hide, or open any card for the full role view.',
-            trailing: SizedBox(
-              width: 136,
-              child: OutlinedButton.icon(
-                onPressed: () => _showFeedFilters(context, ref),
-                icon: const Icon(LucideIcons.listFilter, size: 16),
-                label: const Text('Tune feed'),
+          if (state.isGlobalFallback && jobsFeed.isNotEmpty) ...[
+            const SizedBox(height: 8),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+              decoration: BoxDecoration(
+                color: AppColors.warning.withValues(alpha: 0.10),
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: AppColors.warning.withValues(alpha: 0.3)),
+              ),
+              child: Row(
+                children: [
+                  Icon(LucideIcons.globe, size: 16, color: AppColors.warning),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      'Showing international job opportunities. For UAE-specific jobs, try searching \'jobs\' with location \'Dubai\'.',
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                            color: AppColors.warning,
+                          ),
+                    ),
+                  ),
+                ],
               ),
             ),
-          ),
+          ],
           const SizedBox(height: 14),
-          if (jobsFeed.isEmpty)
+          if (_isLoadingJobs && jobsFeed.isEmpty)
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: 48),
+              child: Center(
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    const CircularProgressIndicator(),
+                    const SizedBox(height: 16),
+                    Text(
+                      'Finding jobs for you...',
+                      style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                            color: AppColors.subtext(Theme.of(context).brightness),
+                          ),
+                    ),
+                    if (_isLoadingSlow) ...[
+                      const SizedBox(height: 8),
+                      Text(
+                        'This may take a moment...',
+                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                              color: AppColors.subtext(Theme.of(context).brightness),
+                            ),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+            )
+          else if (jobsFeed.isEmpty)
             SmartJobEmptyState(
               icon: LucideIcons.searchX,
               title: 'No jobs found',
               message:
-                  'Try widening your role, salary, or experience filters to bring more opportunities back into the feed.',
+                  'Try different keywords or check your connection.',
               action: OutlinedButton.icon(
-                onPressed: ref.read(smartJobControllerProvider.notifier).resetJobFilters,
+                onPressed: _fetchJobs,
                 icon: const Icon(LucideIcons.rotateCcw, size: 16),
-                label: const Text('Reset filters'),
+                label: const Text('Retry'),
               ),
             )
           else
@@ -222,11 +301,22 @@ class HomeScreen extends ConsumerWidget {
   }
 
   Future<void> _applyForJob(BuildContext context, WidgetRef ref, Job job) async {
+    // External jobs — open URL in browser and track.
+    if (job.applyUrl.isNotEmpty) {
+      final uri = Uri.tryParse(job.applyUrl);
+      if (uri != null) {
+        await launchUrl(uri, mode: LaunchMode.externalApplication);
+      }
+      if (!context.mounted) return;
+      ref.read(smartJobControllerProvider.notifier).easyApply(job);
+      _showToast(context, 'Opening ${job.source} to apply.');
+      return;
+    }
+
+    // Internal Easy Apply.
     try {
       final created = await SupabaseDataService.applyToJob(job);
-      if (!context.mounted) {
-        return;
-      }
+      if (!context.mounted) return;
       ref.read(smartJobControllerProvider.notifier).easyApply(job);
       _showToast(
         context,
@@ -235,6 +325,7 @@ class HomeScreen extends ConsumerWidget {
             : 'You already applied to ${job.companyName}.',
       );
     } catch (error) {
+      if (!context.mounted) return;
       _showToast(context, 'Could not send application: $error');
     }
   }

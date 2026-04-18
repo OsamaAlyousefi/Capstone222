@@ -8,6 +8,8 @@ import '../../domain/models/application.dart';
 import '../../domain/models/job.dart';
 import '../../domain/models/message.dart';
 import '../../domain/models/profile.dart';
+import '../../services/job_api_service.dart';
+import '../../services/job_cache_service.dart';
 import '../../services/supabase_data_service.dart';
 
 
@@ -24,6 +26,7 @@ class SmartJobState {
     required this.selectedExperienceLevel,
     required this.selectedSalaryRange,
     required this.selectedInboxFilter,
+    this.isGlobalFallback = false,
   });
 
   final UserProfile profile;
@@ -37,6 +40,10 @@ class SmartJobState {
   final ExperienceLevel? selectedExperienceLevel;
   final String selectedSalaryRange;
   final MessageFilter selectedInboxFilter;
+
+  /// True when the API returned worldwide results because no UAE-specific
+  /// jobs matched the query.
+  final bool isGlobalFallback;
 
   SmartJobState copyWith({
     UserProfile? profile,
@@ -53,6 +60,7 @@ class SmartJobState {
     bool clearSelectedExperienceLevel = false,
     String? selectedSalaryRange,
     MessageFilter? selectedInboxFilter,
+    bool? isGlobalFallback,
   }) {
     return SmartJobState(
       profile: profile ?? this.profile,
@@ -71,6 +79,7 @@ class SmartJobState {
           : selectedExperienceLevel ?? this.selectedExperienceLevel,
       selectedSalaryRange: selectedSalaryRange ?? this.selectedSalaryRange,
       selectedInboxFilter: selectedInboxFilter ?? this.selectedInboxFilter,
+      isGlobalFallback: isGlobalFallback ?? this.isGlobalFallback,
     );
   }
 }
@@ -141,23 +150,24 @@ class SmartJobController extends Notifier<SmartJobState> {
     // ── Applications ──────────────────────────────────────────────────────
     try {
       final remoteApps = await SupabaseDataService.fetchApplications();
-      // Keep local-only apps (mock/easy-apply) that aren't in Supabase yet.
+      // Keep local-only apps (easy-apply) that aren't in Supabase yet.
       final remoteIds = remoteApps.map((a) => a.id).toSet();
-      final localOnly = state.applications.where((a) => !remoteIds.contains(a.id)).toList();
+      final localOnly = state.applications
+          .where((a) => !remoteIds.contains(a.id) && !a.id.startsWith('app_'))
+          .toList();
       final merged = [...remoteApps, ...localOnly];
-      if (merged.isNotEmpty) {
-        _persistAccount(applications: merged);
-      }
+      _persistAccount(applications: merged);
     } catch (_) {}
 
     // ── Inbox messages ────────────────────────────────────────────────────
     try {
       final remoteMessages = await SupabaseDataService.fetchInboxMessages();
-      if (remoteMessages.isNotEmpty) {
-        final remoteIds = remoteMessages.map((m) => m.id).toSet();
-        final localOnly = state.messages.where((m) => !remoteIds.contains(m.id)).toList();
-        _persistAccount(messages: [...remoteMessages, ...localOnly]);
-      }
+      // Keep local-only messages (easy-apply ack) that aren't in Supabase yet.
+      final remoteIds = remoteMessages.map((m) => m.id).toSet();
+      final localOnly = state.messages
+          .where((m) => !remoteIds.contains(m.id) && !m.id.startsWith('msg_'))
+          .toList();
+      _persistAccount(messages: [...remoteMessages, ...localOnly]);
     } catch (_) {}
 
     // ── Profile (CV scores, cv_url, etc.) ─────────────────────────────────
@@ -222,6 +232,73 @@ class SmartJobController extends Notifier<SmartJobState> {
       clearSelectedExperienceLevel: true,
       selectedSalaryRange: 'Any salary',
     );
+  }
+
+  /// Fetches jobs from external APIs (Jooble, Adzuna, Remotive) and merges
+  /// them into the local job list. Checks cache first; results are cached
+  /// for 30 minutes to preserve free API quotas.
+  Future<void> searchExternalJobs({
+    String? query,
+    String? location,
+    bool remoteOnly = false,
+  }) async {
+    final searchQuery = query ??
+        (state.profile.jobPreferences.targetRoles.isNotEmpty
+            ? state.profile.jobPreferences.targetRoles.first
+            : 'developer');
+    final searchLocation = location ?? 'United Arab Emirates';
+
+    final cacheKey = JobCacheService.key(
+      query: searchQuery,
+      location: searchLocation,
+      remoteOnly: remoteOnly,
+      page: 1,
+    );
+
+    // Check cache first.
+    final cached = JobCacheService.get(cacheKey);
+    if (cached != null && cached.isNotEmpty) {
+      _mergeExternalJobs(cached);
+      return;
+    }
+
+    try {
+      final result = await JobApiService.searchJobs(
+        query: searchQuery,
+        location: searchLocation,
+        remoteOnly: remoteOnly,
+      );
+      if (result.jobs.isNotEmpty) {
+        await JobCacheService.set(cacheKey, result.jobs);
+        _mergeExternalJobs(result.jobs);
+        state = state.copyWith(isGlobalFallback: result.isGlobalFallback);
+      }
+    } catch (_) {
+      // API failures are non-fatal — app continues with existing jobs.
+    }
+  }
+
+  void _mergeExternalJobs(List<Job> apiJobs) {
+    // Build a map of existing jobs so we can preserve user interaction state.
+    final existingById = {for (final j in state.jobs) j.id: j};
+    final userSkills = state.profile.skills;
+
+    // Calculate real skill-based match scores for API jobs.
+    final scoredApiJobs = apiJobs.map((job) {
+      final score = JobApiService.calculateMatchScore(job, userSkills);
+      return job.copyWith(matchScore: score);
+    }).toList();
+
+    final merged = <Job>[
+      // Preserve existing API jobs that the user interacted with.
+      for (final existing in state.jobs)
+        if (existing.isSaved || existing.feedback != JobFeedback.none) existing,
+      // Add new API jobs that don't already exist.
+      for (final apiJob in scoredApiJobs)
+        if (!existingById.containsKey(apiJob.id)) apiJob,
+    ];
+
+    _persistAccount(jobs: merged);
   }
 
   void setJobSaved(String jobId, bool isSaved) {
@@ -899,7 +976,7 @@ class SmartJobController extends Notifier<SmartJobState> {
             ? 'Your uploaded CV is backed up to SmartJob cloud storage and synced across supported devices. Keep refining sections below to improve ATS readability and recruiter confidence.'
             : 'Your uploaded CV is connected to SmartJob. Keep refining sections below to improve ATS readability and recruiter confidence.'
         : profile.hasCvDraft
-            ? 'Your SmartJob builder is turning profile sections into a polished CV draft. Complete the missing areas to reach a recruiter-ready score.'
+            ? 'Professional summary'
             : 'Start with skills, projects, and one experience entry to turn this draft into a stronger one-page CV.';
 
     final draftFileName = profile.hasUploadedCv

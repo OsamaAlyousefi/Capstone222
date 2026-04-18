@@ -25,7 +25,6 @@ class MainShell extends StatelessWidget {
         'Applications',
         LucideIcons.barChart3,
       ),
-      _ShellDestination(AppRoute.inbox, 'Inbox', LucideIcons.mail),
       _ShellDestination(AppRoute.profile, 'Profile', LucideIcons.user),
     ];
 

@@ -1,7 +1,6 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:flutter_animate/flutter_animate.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:lucide_icons/lucide_icons.dart';
@@ -21,25 +20,16 @@ class InboxScreen extends ConsumerStatefulWidget {
 
 class _InboxScreenState extends ConsumerState<InboxScreen> {
   String? _selectedMessageId;
-  bool _aliasCopied = false;
-
-  Future<void> _copyAlias(String alias) async {
-    await Clipboard.setData(ClipboardData(text: alias));
-    if (!mounted) return;
-    setState(() => _aliasCopied = true);
-    Future.delayed(const Duration(seconds: 2), () {
-      if (mounted) setState(() => _aliasCopied = false);
-    });
-  }
 
   @override
   Widget build(BuildContext context) {
     final state = ref.watch(smartJobControllerProvider);
     final sourceMessages = state.messages;
+    debugPrint('[Inbox] state.messages.length = ${sourceMessages.length}');
     final messages = _applyFilter(sourceMessages, state.selectedInboxFilter);
+    debugPrint('[Inbox] filtered messages.length = ${messages.length} (filter: ${state.selectedInboxFilter})');
     final unreadCount =
         sourceMessages.where((message) => message.isUnread).length;
-    final alias = state.profile.smartInboxAlias;
 
     final selectedMessage = messages.isNotEmpty
         ? messages.firstWhere(
@@ -53,13 +43,48 @@ class _InboxScreenState extends ConsumerState<InboxScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          // ─── Identity Card ─────────────────────────────────────
-          _IdentityCard(
-            alias: alias,
-            unreadCount: unreadCount,
-            totalMessages: sourceMessages.length,
-            isCopied: _aliasCopied,
-            onCopy: () => _copyAlias(alias),
+          // ─── Header (compact) ──────────────────────────────────
+          SmartJobPanel(
+            child: Row(
+              children: [
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Inbox',
+                        style: Theme.of(context).textTheme.displayMedium,
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        sourceMessages.isEmpty
+                            ? 'No messages yet'
+                            : '${sourceMessages.length} messages · $unreadCount unread',
+                        style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                              color: AppColors.subtext(Theme.of(context).brightness),
+                            ),
+                      ),
+                    ],
+                  ),
+                ),
+                Container(
+                  padding: const EdgeInsets.all(14),
+                  decoration: BoxDecoration(
+                    gradient: const LinearGradient(
+                      colors: [AppColors.midnight, AppColors.teal],
+                      begin: Alignment.topLeft,
+                      end: Alignment.bottomRight,
+                    ),
+                    borderRadius: BorderRadius.circular(18),
+                  ),
+                  child: const Icon(
+                    LucideIcons.mailCheck,
+                    color: Colors.white,
+                    size: 22,
+                  ),
+                ),
+              ],
+            ),
           ).animate().fade().slideY(begin: 0.04),
 
           const SizedBox(height: 20),
@@ -177,224 +202,6 @@ class _InboxScreenState extends ConsumerState<InboxScreen> {
       case MessageFilter.interviews:
         return messages.where((m) => m.type == MessageType.interview).toList();
     }
-  }
-}
-
-// ─────────────────────────────────────────────────────────────────
-// Identity Card
-// ─────────────────────────────────────────────────────────────────
-
-class _IdentityCard extends StatelessWidget {
-  const _IdentityCard({
-    required this.alias,
-    required this.unreadCount,
-    required this.totalMessages,
-    required this.isCopied,
-    required this.onCopy,
-  });
-
-  final String alias;
-  final int unreadCount;
-  final int totalMessages;
-  final bool isCopied;
-  final VoidCallback onCopy;
-
-  @override
-  Widget build(BuildContext context) {
-    final brightness = Theme.of(context).brightness;
-
-    return SmartJobPanel(
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      'Recruiter Inbox',
-                      style: Theme.of(context).textTheme.displayMedium,
-                    ),
-                    const SizedBox(height: 8),
-                    Text(
-                      'A dedicated address for every company you engage with — completely separate from your personal email.',
-                      style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                            color: AppColors.subtext(brightness),
-                          ),
-                    ),
-                  ],
-                ),
-              ),
-              Container(
-                padding: const EdgeInsets.all(14),
-                decoration: BoxDecoration(
-                  gradient: const LinearGradient(
-                    colors: [AppColors.midnight, AppColors.teal],
-                    begin: Alignment.topLeft,
-                    end: Alignment.bottomRight,
-                  ),
-                  borderRadius: BorderRadius.circular(18),
-                ),
-                child: const Icon(
-                  LucideIcons.mailCheck,
-                  color: Colors.white,
-                  size: 22,
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 20),
-
-          // Email identity block
-          Container(
-            padding: const EdgeInsets.all(18),
-            decoration: BoxDecoration(
-              gradient: LinearGradient(
-                colors: [
-                  AppColors.midnight.withValues(alpha: 0.08),
-                  AppColors.teal.withValues(alpha: 0.06),
-                ],
-                begin: Alignment.centerLeft,
-                end: Alignment.centerRight,
-              ),
-              borderRadius: BorderRadius.circular(20),
-              border: Border.all(
-                color: AppColors.midnight.withValues(alpha: 0.18),
-              ),
-            ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  children: [
-                    const Icon(
-                      LucideIcons.atSign,
-                      size: 16,
-                      color: AppColors.teal,
-                    ),
-                    const SizedBox(width: 8),
-                    Text(
-                      'Your SmartJob email identity',
-                      style: Theme.of(context).textTheme.labelLarge?.copyWith(
-                            color: AppColors.teal,
-                            fontWeight: FontWeight.w700,
-                          ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 12),
-                Row(
-                  children: [
-                    Expanded(
-                      child: Text(
-                        alias.isEmpty ? 'No alias set yet' : alias,
-                        style: Theme.of(context).textTheme.headlineMedium?.copyWith(
-                              fontWeight: FontWeight.w700,
-                              color: alias.isEmpty
-                                  ? AppColors.subtext(brightness)
-                                  : AppColors.text(brightness),
-                            ),
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                    ),
-                    const SizedBox(width: 12),
-                    if (alias.isNotEmpty)
-                      AnimatedSwitcher(
-                        duration: const Duration(milliseconds: 200),
-                        child: isCopied
-                            ? Container(
-                                key: const ValueKey('copied'),
-                                padding: const EdgeInsets.symmetric(
-                                  horizontal: 14,
-                                  vertical: 10,
-                                ),
-                                decoration: BoxDecoration(
-                                  color: AppColors.success.withValues(alpha: 0.14),
-                                  borderRadius: BorderRadius.circular(12),
-                                  border: Border.all(
-                                    color: AppColors.success.withValues(alpha: 0.3),
-                                  ),
-                                ),
-                                child: Row(
-                                  mainAxisSize: MainAxisSize.min,
-                                  children: [
-                                    const Icon(
-                                      LucideIcons.check,
-                                      size: 14,
-                                      color: AppColors.success,
-                                    ),
-                                    const SizedBox(width: 6),
-                                    Text(
-                                      'Copied',
-                                      style: Theme.of(context)
-                                          .textTheme
-                                          .labelLarge
-                                          ?.copyWith(color: AppColors.success),
-                                    ),
-                                  ],
-                                ),
-                              )
-                            : OutlinedButton.icon(
-                                key: const ValueKey('copy'),
-                                onPressed: onCopy,
-                                icon: const Icon(LucideIcons.copy, size: 14),
-                                label: const Text('Copy'),
-                              ),
-                      ),
-                  ],
-                ),
-                const SizedBox(height: 14),
-                Container(
-                  padding: const EdgeInsets.all(12),
-                  decoration: BoxDecoration(
-                    color: AppColors.surface(brightness).withValues(alpha: 0.6),
-                    borderRadius: BorderRadius.circular(14),
-                  ),
-                  child: Row(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      const Icon(
-                        LucideIcons.info,
-                        size: 14,
-                        color: AppColors.teal,
-                      ),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: Text(
-                          'Use this address when applying to jobs instead of your personal email. All replies from recruiters and companies will arrive here, keeping your applications organised and your personal inbox clean.',
-                          style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                                color: AppColors.subtext(brightness),
-                              ),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ],
-            ),
-          ),
-          const SizedBox(height: 16),
-          Wrap(
-            spacing: 10,
-            runSpacing: 10,
-            children: [
-              SmartJobMetricPill(
-                label: 'messages',
-                value: '$totalMessages',
-                icon: LucideIcons.mail,
-              ),
-              SmartJobMetricPill(
-                label: 'unread',
-                value: '$unreadCount',
-                icon: LucideIcons.mailOpen,
-              ),
-            ],
-          ),
-        ],
-      ),
-    );
   }
 }
 

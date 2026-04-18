@@ -2,6 +2,7 @@
 import 'package:lucide_icons/lucide_icons.dart';
 
 import '../../../domain/models/job.dart';
+import '../../../services/job_summary_service.dart';
 import '../../../theme/app_colors.dart';
 import '../../shared/widgets/smart_job_ui.dart';
 
@@ -56,7 +57,7 @@ class JobCard extends StatelessWidget {
   }
 }
 
-class _JobCardContent extends StatelessWidget {
+class _JobCardContent extends StatefulWidget {
   const _JobCardContent({
     required this.job,
     required this.onOpenDetails,
@@ -70,21 +71,44 @@ class _JobCardContent extends StatelessWidget {
   final VoidCallback onSaveToggle;
 
   @override
+  State<_JobCardContent> createState() => _JobCardContentState();
+}
+
+class _JobCardContentState extends State<_JobCardContent> {
+  String? _aiSummary;
+
+  @override
+  void initState() {
+    super.initState();
+    _aiSummary = JobSummaryService.getCached(widget.job.id);
+    if (_aiSummary == null) {
+      JobSummaryService.summaryNotifier.addListener(_onSummaryUpdate);
+    }
+  }
+
+  @override
+  void dispose() {
+    JobSummaryService.summaryNotifier.removeListener(_onSummaryUpdate);
+    super.dispose();
+  }
+
+  void _onSummaryUpdate() {
+    final cached = JobSummaryService.getCached(widget.job.id);
+    if (cached != null && mounted) {
+      setState(() => _aiSummary = cached);
+      JobSummaryService.summaryNotifier.removeListener(_onSummaryUpdate);
+    }
+  }
+
+  @override
   Widget build(BuildContext context) {
     final brightness = Theme.of(context).brightness;
     final textTheme = Theme.of(context).textTheme;
-    final matchColor = jobMatchColor(job.matchScore);
-    final matchPercentage = (job.matchScore * 100).round();
+    final job = widget.job;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        _CompactMatchStrip(
-          matchPercentage: matchPercentage,
-          matchLabel: jobMatchLabel(job.matchScore),
-          color: matchColor,
-        ),
-        const SizedBox(height: 14),
         Row(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -105,7 +129,9 @@ class _JobCardContent extends StatelessWidget {
                   ),
                   const SizedBox(height: 6),
                   Text(
-                    '${job.companyName} / ${job.source}',
+                    job.source.isNotEmpty
+                        ? '${job.companyName} / via ${job.source}'
+                        : job.companyName,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: textTheme.bodyMedium?.copyWith(
@@ -125,7 +151,7 @@ class _JobCardContent extends StatelessWidget {
             const SizedBox(width: 12),
             _AnimatedSaveButton(
               isSaved: job.isSaved,
-              onTap: onSaveToggle,
+              onTap: widget.onSaveToggle,
             ),
           ],
         ),
@@ -135,20 +161,34 @@ class _JobCardContent extends StatelessWidget {
           runSpacing: 8,
           children: [
             _InfoChip(icon: LucideIcons.mapPin, label: job.location),
-            _InfoChip(icon: LucideIcons.banknote, label: job.salary),
+            if (job.salary != 'Not listed')
+              _InfoChip(icon: LucideIcons.banknote, label: job.salary),
             _InfoChip(icon: LucideIcons.briefcase, label: jobTypeLabel(job.jobType)),
             _InfoChip(icon: LucideIcons.wifi, label: workModeLabel(job.workMode)),
           ],
         ),
         const SizedBox(height: 14),
+
+        // Show AI summary if available, otherwise cleaned raw description.
         Text(
-          job.description,
-          maxLines: 2,
+          _aiSummary ?? job.description,
+          maxLines: 3,
           overflow: TextOverflow.ellipsis,
           style: textTheme.bodyMedium?.copyWith(
             color: AppColors.text(brightness).withValues(alpha: 0.88),
           ),
         ),
+        if (_aiSummary != null)
+          Padding(
+            padding: const EdgeInsets.only(top: 4),
+            child: Text(
+              '\u2728 AI Summary',
+              style: textTheme.labelSmall?.copyWith(
+                color: AppColors.subtext(brightness),
+              ),
+            ),
+          ),
+
         const SizedBox(height: 14),
         Wrap(
           spacing: 8,
@@ -157,158 +197,26 @@ class _JobCardContent extends StatelessWidget {
             for (final skill in job.skills.take(4)) _SkillTag(label: skill),
           ],
         ),
-        const SizedBox(height: 12),
-        Text(
-          'Swipe right to save or left for not interested',
-          style: textTheme.bodySmall?.copyWith(
-            color: AppColors.subtext(brightness),
-          ),
-        ),
         const SizedBox(height: 16),
         Row(
           children: [
             Expanded(
               child: OutlinedButton(
-                onPressed: onOpenDetails,
+                onPressed: widget.onOpenDetails,
                 child: const Text('Read more'),
               ),
             ),
             const SizedBox(width: 10),
             Expanded(
               child: ElevatedButton(
-                onPressed: job.hasEasyApply ? onApply : null,
-                child: const Text('Easy apply'),
+                onPressed:
+                    (job.applyUrl.isNotEmpty || job.hasEasyApply) ? widget.onApply : null,
+                child: Text(job.applyUrl.isNotEmpty ? 'Apply' : 'Easy apply'),
               ),
             ),
           ],
         ),
       ],
-    );
-  }
-}
-
-class _CompactMatchStrip extends StatelessWidget {
-  const _CompactMatchStrip({
-    required this.matchPercentage,
-    required this.matchLabel,
-    required this.color,
-  });
-
-  final int matchPercentage;
-  final String matchLabel;
-  final Color color;
-
-  @override
-  Widget build(BuildContext context) {
-    final brightness = Theme.of(context).brightness;
-
-    return Container(
-      height: 46,
-      padding: const EdgeInsets.symmetric(horizontal: 10),
-      decoration: BoxDecoration(
-        color: AppColors.surfaceMuted(brightness).withValues(alpha: 0.72),
-        borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: AppColors.stroke(brightness)),
-      ),
-      child: Row(
-        children: [
-          SizedBox(
-            width: 44,
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Container(
-                  width: 28,
-                  height: 28,
-                  alignment: Alignment.center,
-                  decoration: BoxDecoration(
-                    color: color.withValues(alpha: 0.18),
-                    shape: BoxShape.circle,
-                  ),
-                  child: Text(
-                    '$matchPercentage%',
-                    style: Theme.of(context).textTheme.labelMedium?.copyWith(
-                      fontSize: 8.5,
-                      color: color,
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 2),
-                Text(
-                  'Match',
-                  style: Theme.of(context).textTheme.labelMedium?.copyWith(
-                    fontSize: 8.5,
-                    color: AppColors.subtext(brightness),
-                  ),
-                ),
-              ],
-            ),
-          ),
-          const SizedBox(width: 10),
-          Expanded(
-            child: _MatchProgressBar(
-              value: matchPercentage / 100,
-              color: color,
-            ),
-          ),
-          const SizedBox(width: 12),
-          Text(
-            matchLabel,
-            style: Theme.of(context).textTheme.labelLarge?.copyWith(
-              color: color,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _MatchProgressBar extends StatelessWidget {
-  const _MatchProgressBar({
-    required this.value,
-    required this.color,
-  });
-
-  final double value;
-  final Color color;
-
-  @override
-  Widget build(BuildContext context) {
-    final brightness = Theme.of(context).brightness;
-
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final trackWidth = constraints.maxWidth;
-        final fillWidth = (trackWidth * value.clamp(0.0, 1.0)).toDouble();
-
-        return Stack(
-          children: [
-            Container(
-              height: 6,
-              decoration: BoxDecoration(
-                color: AppColors.surface(brightness),
-                borderRadius: BorderRadius.circular(999),
-              ),
-            ),
-            AnimatedContainer(
-              duration: const Duration(milliseconds: 260),
-              curve: Curves.easeOutCubic,
-              width: fillWidth,
-              height: 6,
-              decoration: BoxDecoration(
-                borderRadius: BorderRadius.circular(999),
-                gradient: LinearGradient(
-                  colors: [
-                    AppColors.midnight.withValues(alpha: 0.68),
-                    color,
-                  ],
-                ),
-              ),
-            ),
-          ],
-        );
-      },
     );
   }
 }

@@ -123,6 +123,11 @@ Field rules:
 
       if (response.statusCode != 200) {
         final detail = _extractErrorDetail(response.body);
+        final bodyLower = response.body.toLowerCase();
+        if ((response.statusCode == 400 || response.statusCode == 403) &&
+            (bodyLower.contains('restricted') || bodyLower.contains('unauthorized'))) {
+          debugPrint('[GROQ] Account restricted - check API key');
+        }
         final message = switch (response.statusCode) {
           400 => 'Bad request — $detail',
           401 || 403 => 'Invalid or unauthorized API key. $detail',

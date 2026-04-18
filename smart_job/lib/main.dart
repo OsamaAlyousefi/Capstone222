@@ -6,6 +6,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import 'application/controllers/auth_controller.dart' hide AuthState;
+import 'services/job_cache_service.dart';
 import 'application/controllers/smart_job_controller.dart';
 import 'data/database/smart_job_database.dart';
 import 'data/local/local_smart_job_repository.dart';
@@ -24,6 +25,7 @@ Future<void> main() async {
     anonKey: dotenv.env['SUPABASE_ANON_KEY']!,
   );
   supabase = Supabase.instance.client;
+  await JobCacheService.init();
   final sharedPreferences = await SharedPreferences.getInstance();
   final database = await SmartJobDatabase.open(
     legacyPreferences: sharedPreferences,

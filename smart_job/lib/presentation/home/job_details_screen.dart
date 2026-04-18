@@ -1,6 +1,7 @@
 ﻿import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:lucide_icons/lucide_icons.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../../application/controllers/smart_job_controller.dart';
 import '../../domain/models/job.dart';
@@ -57,9 +58,6 @@ class JobDetailsScreen extends ConsumerWidget {
 
     final job = maybeJob;
     final profile = state.profile;
-    final matchPercentage = (job.matchScore * 100).round();
-    final matchLabel = jobMatchLabel(job.matchScore);
-    final matchColor = jobMatchColor(job.matchScore);
     final applied = state.applications.any((application) => application.jobId == job.id);
     final matchedSkills = _matchedSkills(profile.skills, job.skills);
     final suggestedSkills = _suggestedSkills(
@@ -68,9 +66,6 @@ class JobDetailsScreen extends ConsumerWidget {
       profile.cvInsight.missingKeywords,
     );
     final similarJobs = _similarJobs(state.jobs, job, profile.skills);
-    final explanation = matchedSkills.isNotEmpty
-        ? 'Your ${matchedSkills.take(3).join(', ')} skills align with this role.'
-        : 'Your profile aligns with the core signals this team is hiring for.';
 
     return Scaffold(
       backgroundColor: AppColors.canvas(brightness),
@@ -90,11 +85,19 @@ class JobDetailsScreen extends ConsumerWidget {
           );
         },
         onApply: () async {
+          if (job.applyUrl.isNotEmpty) {
+            final uri = Uri.tryParse(job.applyUrl);
+            if (uri != null) {
+              await launchUrl(uri, mode: LaunchMode.externalApplication);
+            }
+            if (!context.mounted) return;
+            ref.read(smartJobControllerProvider.notifier).easyApply(job);
+            _showToast(context, 'Opening ${job.source} to apply.');
+            return;
+          }
           try {
             final created = await SupabaseDataService.applyToJob(job);
-            if (!context.mounted) {
-              return;
-            }
+            if (!context.mounted) return;
             ref.read(smartJobControllerProvider.notifier).easyApply(job);
             _showToast(
               context,
@@ -103,6 +106,7 @@ class JobDetailsScreen extends ConsumerWidget {
                   : 'You already applied to ${job.companyName}.',
             );
           } catch (error) {
+            if (!context.mounted) return;
             _showToast(context, 'Could not send application: $error');
           }
         },
@@ -152,13 +156,6 @@ class JobDetailsScreen extends ConsumerWidget {
               ),
               sliver: SliverList.list(
                 children: [
-                  _MatchOverviewPanel(
-                    matchPercentage: matchPercentage,
-                    matchLabel: matchLabel,
-                    explanation: explanation,
-                    color: matchColor,
-                  ),
-                  const SizedBox(height: 16),
                   _DetailsSection(
                     icon: LucideIcons.fileText,
                     title: 'About the role',
@@ -415,80 +412,6 @@ class _HeroHeaderCard extends StatelessWidget {
   }
 }
 
-class _MatchOverviewPanel extends StatelessWidget {
-  const _MatchOverviewPanel({
-    required this.matchPercentage,
-    required this.matchLabel,
-    required this.explanation,
-    required this.color,
-  });
-
-  final int matchPercentage;
-  final String matchLabel;
-  final String explanation;
-  final Color color;
-
-  @override
-  Widget build(BuildContext context) {
-    final brightness = Theme.of(context).brightness;
-
-    return SmartJobPanel(
-      padding: const EdgeInsets.all(20),
-      radius: 28,
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Container(
-            width: 86,
-            height: 86,
-            alignment: Alignment.center,
-            decoration: BoxDecoration(
-              gradient: LinearGradient(
-                colors: [
-                  color,
-                  AppColors.midnight,
-                ],
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
-              ),
-              borderRadius: BorderRadius.circular(28),
-            ),
-            child: Text(
-              '$matchPercentage%',
-              style: Theme.of(context).textTheme.headlineMedium?.copyWith(
-                    color: Colors.white,
-                  ),
-            ),
-          ),
-          const SizedBox(width: 16),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  '$matchPercentage% match - $matchLabel for your profile',
-                  style: Theme.of(context).textTheme.headlineMedium?.copyWith(
-                        color: color,
-                      ),
-                ),
-                const SizedBox(height: 10),
-                _GradientProgressBar(value: matchPercentage / 100, color: color),
-                const SizedBox(height: 12),
-                Text(
-                  explanation,
-                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                        color: AppColors.subtext(brightness),
-                      ),
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
 class _DetailsSection extends StatelessWidget {
   const _DetailsSection({
     required this.icon,
@@ -707,9 +630,9 @@ class _SimilarJobCard extends StatelessWidget {
                 Row(
                   children: [
                     Text(
-                      '${(job.matchScore * 100).round()}% match',
+                      job.source,
                       style: Theme.of(context).textTheme.labelLarge?.copyWith(
-                            color: jobMatchColor(job.matchScore),
+                            color: AppColors.teal,
                           ),
                     ),
                     const Spacer(),
@@ -776,9 +699,22 @@ class _StickyActionBar extends StatelessWidget {
               Expanded(
                 flex: 2,
                 child: ElevatedButton.icon(
-                  onPressed: applied || !job.hasEasyApply ? null : onApply,
-                  icon: Icon(applied ? LucideIcons.badgeCheck : LucideIcons.send, size: 18),
-                  label: Text(applied ? 'Applied' : 'Easy apply'),
+                  onPressed: applied ? null : onApply,
+                  icon: Icon(
+                    applied
+                        ? LucideIcons.badgeCheck
+                        : job.applyUrl.isNotEmpty
+                            ? LucideIcons.externalLink
+                            : LucideIcons.send,
+                    size: 18,
+                  ),
+                  label: Text(
+                    applied
+                        ? 'Applied'
+                        : job.applyUrl.isNotEmpty
+                            ? 'Apply on ${job.source}'
+                            : 'Easy apply',
+                  ),
                 ),
               ),
               const SizedBox(width: 10),
@@ -795,50 +731,6 @@ class _StickyActionBar extends StatelessWidget {
           ),
         ),
       ),
-    );
-  }
-}
-
-class _GradientProgressBar extends StatelessWidget {
-  const _GradientProgressBar({
-    required this.value,
-    required this.color,
-  });
-
-  final double value;
-  final Color color;
-
-  @override
-  Widget build(BuildContext context) {
-    final brightness = Theme.of(context).brightness;
-
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final width = constraints.maxWidth * value.clamp(0.0, 1.0);
-        return Stack(
-          children: [
-            Container(
-              height: 10,
-              decoration: BoxDecoration(
-                color: AppColors.surfaceMuted(brightness),
-                borderRadius: BorderRadius.circular(999),
-              ),
-            ),
-            AnimatedContainer(
-              duration: const Duration(milliseconds: 260),
-              curve: Curves.easeOutCubic,
-              width: width,
-              height: 10,
-              decoration: BoxDecoration(
-                borderRadius: BorderRadius.circular(999),
-                gradient: LinearGradient(
-                  colors: [AppColors.midnight, color, AppColors.sand],
-                ),
-              ),
-            ),
-          ],
-        );
-      },
     );
   }
 }

@@ -261,9 +261,9 @@ class SupabaseDataService {
       throw StateError('Not logged in');
     }
 
-    // Mock/seed jobs have non-UUID IDs (e.g. "job_1"). The applications table
-    // expects a UUID for job_id, so skip the remote insert and treat it as a
-    // successful local-only application.
+    // External API jobs have non-UUID IDs (e.g. "jooble_123"). The applications
+    // table expects a UUID for job_id, so skip the remote insert and treat it
+    // as a successful local-only application.
     if (!_isValidUuid(job.id)) {
       return true;
     }
