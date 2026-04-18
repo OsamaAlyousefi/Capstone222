@@ -37,6 +37,12 @@ class SupabaseDataService {
       linkedInUrl: _pickString(profile['linkedin_url'], fallback.linkedInUrl),
       portfolioUrl: _pickString(profile['github_url'], fallback.portfolioUrl),
       websiteUrl: _pickString(profile['website_url'], fallback.websiteUrl),
+      publicProfileEnabled:
+          profile['is_public'] as bool? ?? fallback.publicProfileEnabled,
+      hideContactInfo:
+          profile['hide_contact_info'] as bool? ?? fallback.hideContactInfo,
+      privacyModeEnabled:
+          profile['privacy_mode'] as bool? ?? fallback.privacyModeEnabled,
       hasUploadedCv: cvUrl.isNotEmpty || fallback.hasUploadedCv,
       jobPreferences: fallback.jobPreferences.copyWith(
         targetRoles: _stringList(profile['desired_roles']).isEmpty
@@ -105,6 +111,22 @@ class SupabaseDataService {
       'linkedin_url': linkedInUrl,
       'github_url': portfolioUrl,
       'website_url': websiteUrl,
+      'updated_at': DateTime.now().toUtc().toIso8601String(),
+    }).eq('id', userId);
+  }
+
+  static Future<void> updatePrivacySettings({
+    required bool isPublic,
+    required bool hideContactInfo,
+    required bool privacyMode,
+  }) async {
+    final userId = _client.auth.currentUser?.id;
+    if (userId == null) return;
+
+    await _client.from('profiles').update({
+      'is_public': isPublic,
+      'hide_contact_info': hideContactInfo,
+      'privacy_mode': privacyMode,
       'updated_at': DateTime.now().toUtc().toIso8601String(),
     }).eq('id', userId);
   }

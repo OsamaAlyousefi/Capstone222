@@ -14,6 +14,7 @@ import 'package:syncfusion_flutter_pdfviewer/pdfviewer.dart';
 import '../../application/controllers/smart_job_controller.dart';
 import '../../domain/models/profile.dart';
 import '../../router/app_router.dart';
+import '../../services/cv_suggestion_service.dart';
 import '../../services/supabase_data_service.dart';
 import '../../theme/app_colors.dart';
 import '../shared/widgets/smart_job_ui.dart';
@@ -139,6 +140,7 @@ class _CVScreenState extends ConsumerState<CVScreen> {
               final improveNext = _ImproveNextCard(
                 tips: cv.improvementTips,
                 onTapTip: (tip) => _openEditorForTip(context, tip),
+                profile: profile,
               );
 
               if (constraints.maxWidth >= 980) {
@@ -1965,24 +1967,63 @@ class _SuggestedKeywordsCard extends StatelessWidget {
   }
 }
 
-class _ImproveNextCard extends StatelessWidget {
+class _ImproveNextCard extends StatefulWidget {
   const _ImproveNextCard({
     required this.tips,
     required this.onTapTip,
+    required this.profile,
   });
 
   final List<String> tips;
   final ValueChanged<String> onTapTip;
+  final UserProfile profile;
+
+  @override
+  State<_ImproveNextCard> createState() => _ImproveNextCardState();
+}
+
+class _ImproveNextCardState extends State<_ImproveNextCard> {
+  String? _aiSuggestion;
+  bool _loadingAi = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _aiSuggestion = CvSuggestionService.cached;
+    if (_aiSuggestion == null) {
+      _fetchAiSuggestion();
+    }
+  }
+
+  Future<void> _fetchAiSuggestion() async {
+    final p = widget.profile;
+    if (p.fullName.isEmpty && p.skills.isEmpty) return;
+    setState(() => _loadingAi = true);
+    final result = await CvSuggestionService.generate(
+      name: p.fullName,
+      skills: p.skills,
+      experience: p.experience,
+      education: p.education,
+      projects: p.projects,
+      headline: p.headline,
+    );
+    if (mounted) {
+      setState(() {
+        _aiSuggestion = result;
+        _loadingAi = false;
+      });
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
-    final effectiveTips = tips.isEmpty
+    final effectiveTips = widget.tips.isEmpty
         ? const [
             'Add stronger action verbs to your experience bullets.',
             'Include missing technical tools in your skills section.',
             'Quantify one achievement with delivery, growth, or impact.',
           ]
-        : tips;
+        : widget.tips;
 
     return SmartJobPanel(
       radius: 24,
@@ -1995,12 +2036,43 @@ class _ImproveNextCard extends StatelessWidget {
                 'Focused edits that will most likely improve readability, keyword fit, and recruiter confidence.',
           ),
           const SizedBox(height: 16),
+          if (_aiSuggestion != null)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 12),
+              child: _ImprovementTile(
+                index: 0,
+                tip: _aiSuggestion!,
+                icon: Icons.auto_awesome,
+                label: '\u2728 AI Suggestion',
+                onTap: () => widget.onTapTip(_aiSuggestion!),
+              ),
+            )
+          else if (_loadingAi)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 12),
+              child: Row(
+                children: [
+                  const SizedBox(
+                    width: 16,
+                    height: 16,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  ),
+                  const SizedBox(width: 10),
+                  Text(
+                    'Generating AI suggestion...',
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                      color: AppColors.subtext(Theme.of(context).brightness),
+                    ),
+                  ),
+                ],
+              ),
+            ),
           for (var i = 0; i < effectiveTips.length; i++) ...[
             _ImprovementTile(
               index: i + 1,
               tip: effectiveTips[i],
               icon: _tipIconFor(effectiveTips[i]),
-              onTap: () => onTapTip(effectiveTips[i]),
+              onTap: () => widget.onTapTip(effectiveTips[i]),
             ),
             if (i != effectiveTips.length - 1) const SizedBox(height: 12),
           ],
@@ -2296,12 +2368,14 @@ class _ImprovementTile extends StatelessWidget {
     required this.tip,
     required this.icon,
     required this.onTap,
+    this.label,
   });
 
   final int index;
   final String tip;
   final IconData icon;
   final VoidCallback onTap;
+  final String? label;
 
   @override
   Widget build(BuildContext context) {
@@ -2328,15 +2402,19 @@ class _ImprovementTile extends StatelessWidget {
                 alignment: Alignment.center,
                 decoration: BoxDecoration(
                   borderRadius: BorderRadius.circular(14),
-                  color: AppColors.midnight.withValues(alpha: 0.12),
+                  color: label != null
+                      ? AppColors.teal.withValues(alpha: 0.15)
+                      : AppColors.midnight.withValues(alpha: 0.12),
                 ),
-                child: Text(
-                  '$index',
-                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                        color: AppColors.midnight,
-                        fontWeight: FontWeight.w700,
+                child: label != null
+                    ? Icon(icon, size: 20, color: AppColors.teal)
+                    : Text(
+                        '$index',
+                        style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                              color: AppColors.midnight,
+                              fontWeight: FontWeight.w700,
+                            ),
                       ),
-                ),
               ),
               const SizedBox(width: 14),
               Expanded(

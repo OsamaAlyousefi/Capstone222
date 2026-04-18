@@ -28,6 +28,9 @@ create table if not exists public.profiles (
   cv_completeness       integer     not null default 0,
   cv_ats_score          integer     not null default 0,
   cv_alignment_score    integer     not null default 0,
+  is_public             boolean     not null default false,
+  hide_contact_info     boolean     not null default false,
+  privacy_mode          boolean     not null default false,
   updated_at            timestamptz not null default timezone('utc', now())
 );
 
@@ -55,6 +58,11 @@ drop trigger if exists on_auth_user_created on auth.users;
 create trigger on_auth_user_created
   after insert on auth.users
   for each row execute procedure public.handle_new_user();
+
+-- Safe column additions for existing deployments
+alter table public.profiles add column if not exists is_public boolean not null default false;
+alter table public.profiles add column if not exists hide_contact_info boolean not null default false;
+alter table public.profiles add column if not exists privacy_mode boolean not null default false;
 
 -- ─── Jobs ─────────────────────────────────────────────────────
 create table if not exists public.jobs (

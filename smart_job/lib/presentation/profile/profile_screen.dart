@@ -3,6 +3,7 @@ import 'package:flutter_animate/flutter_animate.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:lucide_icons/lucide_icons.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../../application/controllers/auth_controller.dart';
 import '../../application/controllers/smart_job_controller.dart';
@@ -111,10 +112,29 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
               context.go(AppRoute.login);
             },
             onDeleteAccount: () async {
+              final confirmed = await showDialog<bool>(
+                context: context,
+                builder: (ctx) => AlertDialog(
+                  title: const Text('Delete account?'),
+                  content: const Text(
+                    'This will permanently remove your profile, CV, applications, and all saved data. This action cannot be undone.',
+                  ),
+                  actions: [
+                    TextButton(
+                      onPressed: () => Navigator.of(ctx).pop(false),
+                      child: const Text('Cancel'),
+                    ),
+                    TextButton(
+                      style: TextButton.styleFrom(foregroundColor: AppColors.danger),
+                      onPressed: () => Navigator.of(ctx).pop(true),
+                      child: const Text('Delete'),
+                    ),
+                  ],
+                ),
+              );
+              if (confirmed != true || !context.mounted) return;
               await AuthService.signOut();
-              if (!context.mounted) {
-                return;
-              }
+              if (!context.mounted) return;
               ref.read(authControllerProvider.notifier).signOut();
               ref.read(smartJobControllerProvider.notifier).deleteAccount();
               context.go(AppRoute.login);
@@ -463,7 +483,7 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
                           ),
                           const SizedBox(height: 12),
                           OutlinedButton.icon(
-                            onPressed: () => _showMessage(context, 'Profile export bundle is queued in prototype mode.'),
+                            onPressed: () => _showDownloadDataSheet(context, ref),
                             icon: const Icon(LucideIcons.download),
                             label: const Text('Download my data'),
                           ),
@@ -476,13 +496,13 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
                       child: Column(
                         children: [
                           OutlinedButton.icon(
-                            onPressed: () => _showMessage(context, 'Help center articles will open here in a future build.'),
+                            onPressed: () => _showHelpCenterSheet(context),
                             icon: const Icon(Icons.help_outline),
                             label: const Text('Help center'),
                           ),
                           const SizedBox(height: 12),
                           OutlinedButton.icon(
-                            onPressed: () => _showMessage(context, 'Support email drafted to support@smartjob.app.'),
+                            onPressed: () => launchUrl(Uri.parse('mailto:support@smartjob.app?subject=SmartJob%20Support%20Request')),
                             icon: const Icon(LucideIcons.mail),
                             label: const Text('support@smartjob.app'),
                           ),
@@ -612,6 +632,11 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
                             _remoteProfile = ref.read(smartJobControllerProvider).profile;
                             _error = null;
                           });
+                        }
+                        if (context.mounted) {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(content: Text('Profile updated')),
+                          );
                         }
                       } catch (error) {
                         if (!context.mounted) {
@@ -896,8 +921,149 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
     controller.dispose();
   }
 
+  void _showHelpCenterSheet(BuildContext context) {
+    showModalBottomSheet<void>(
+      context: context,
+      useRootNavigator: true,
+      backgroundColor: Colors.transparent,
+      isScrollControlled: true,
+      builder: (context) {
+        return Padding(
+          padding: const EdgeInsets.fromLTRB(16, 16, 16, 32),
+          child: SmartJobPanel(
+            radius: 24,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const SmartJobSectionHeader(
+                  title: 'Help Center',
+                  subtitle: 'Common questions and quick answers.',
+                ),
+                const SizedBox(height: 16),
+                _HelpItem(title: 'How do I update my CV?', answer: 'Go to the CV tab, tap "Edit content", and update your information. You can also use the AI paragraph builder.'),
+                const SizedBox(height: 12),
+                _HelpItem(title: 'How do I apply for a job?', answer: 'Tap any job card on the Home screen, then tap "Apply". For external jobs, you\'ll be redirected to the company website.'),
+                const SizedBox(height: 12),
+                _HelpItem(title: 'How do I change my password?', answer: 'Use the "Forgot password" option on the login screen to receive a reset link via email.'),
+                const SizedBox(height: 12),
+                _HelpItem(title: 'Is my data secure?', answer: 'Yes. Your data is stored securely in Supabase with row-level security. Only you can access your profile and applications.'),
+                const SizedBox(height: 18),
+                SizedBox(
+                  width: double.infinity,
+                  child: OutlinedButton(
+                    onPressed: () => Navigator.of(context).pop(),
+                    child: const Text('Close'),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  void _showDownloadDataSheet(BuildContext context, WidgetRef ref) {
+    final profile = ref.read(smartJobControllerProvider).profile;
+    final state = ref.read(smartJobControllerProvider);
+    final data = StringBuffer()
+      ..writeln('=== SmartJob Profile Export ===')
+      ..writeln('Name: ${profile.fullName}')
+      ..writeln('Email: ${profile.email}')
+      ..writeln('Phone: ${profile.phoneNumber}')
+      ..writeln('Location: ${profile.location}')
+      ..writeln('Headline: ${profile.headline}')
+      ..writeln('Tagline: ${profile.tagline}')
+      ..writeln('')
+      ..writeln('=== Skills ===')
+      ..writeln(profile.skills.isEmpty ? 'None' : profile.skills.join(', '))
+      ..writeln('')
+      ..writeln('=== Experience ===')
+      ..writeln(profile.experience.isEmpty ? 'None' : profile.experience.join('\n'))
+      ..writeln('')
+      ..writeln('=== Education ===')
+      ..writeln(profile.education.isEmpty ? 'None' : profile.education.join('\n'))
+      ..writeln('')
+      ..writeln('=== Projects ===')
+      ..writeln(profile.projects.isEmpty ? 'None' : profile.projects.join('\n'))
+      ..writeln('')
+      ..writeln('=== Applications ===')
+      ..writeln('Total: ${state.applications.length}');
+
+    showModalBottomSheet<void>(
+      context: context,
+      useRootNavigator: true,
+      backgroundColor: Colors.transparent,
+      isScrollControlled: true,
+      builder: (context) {
+        return Padding(
+          padding: const EdgeInsets.fromLTRB(16, 16, 16, 32),
+          child: SmartJobPanel(
+            radius: 24,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const SmartJobSectionHeader(
+                  title: 'Your Data Export',
+                  subtitle: 'A summary of all data stored in your SmartJob account.',
+                ),
+                const SizedBox(height: 16),
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(14),
+                  decoration: BoxDecoration(
+                    color: AppColors.surfaceMuted(Theme.of(context).brightness),
+                    borderRadius: BorderRadius.circular(14),
+                  ),
+                  constraints: const BoxConstraints(maxHeight: 300),
+                  child: SingleChildScrollView(
+                    child: Text(
+                      data.toString(),
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        fontFamily: 'monospace',
+                      ),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 18),
+                SizedBox(
+                  width: double.infinity,
+                  child: OutlinedButton(
+                    onPressed: () => Navigator.of(context).pop(),
+                    child: const Text('Close'),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
   void _showMessage(BuildContext context, String message) {
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
+  }
+}
+
+class _HelpItem extends StatelessWidget {
+  const _HelpItem({required this.title, required this.answer});
+  final String title;
+  final String answer;
+
+  @override
+  Widget build(BuildContext context) {
+    final brightness = Theme.of(context).brightness;
+    return ExpansionTile(
+      tilePadding: EdgeInsets.zero,
+      childrenPadding: const EdgeInsets.only(bottom: 8),
+      title: Text(title, style: Theme.of(context).textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.w600)),
+      children: [
+        Text(answer, style: Theme.of(context).textTheme.bodySmall?.copyWith(color: AppColors.subtext(brightness))),
+      ],
+    );
   }
 }
 

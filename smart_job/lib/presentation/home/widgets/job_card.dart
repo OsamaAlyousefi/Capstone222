@@ -2,6 +2,7 @@
 import 'package:lucide_icons/lucide_icons.dart';
 
 import '../../../domain/models/job.dart';
+import '../../../services/job_match_service.dart';
 import '../../../services/job_summary_service.dart';
 import '../../../theme/app_colors.dart';
 import '../../shared/widgets/smart_job_ui.dart';
@@ -15,6 +16,7 @@ class JobCard extends StatelessWidget {
     required this.onSaveToggle,
     required this.onSwipeSave,
     required this.onSwipeDismiss,
+    this.matchResult,
   });
 
   final Job job;
@@ -23,6 +25,7 @@ class JobCard extends StatelessWidget {
   final VoidCallback onSaveToggle;
   final VoidCallback onSwipeSave;
   final VoidCallback onSwipeDismiss;
+  final JobMatchResult? matchResult;
 
   @override
   Widget build(BuildContext context) {
@@ -49,6 +52,7 @@ class JobCard extends StatelessWidget {
               onOpenDetails: onOpenDetails,
               onApply: onApply,
               onSaveToggle: onSaveToggle,
+              matchResult: matchResult,
             ),
           ),
         ),
@@ -63,9 +67,11 @@ class _JobCardContent extends StatefulWidget {
     required this.onOpenDetails,
     required this.onApply,
     required this.onSaveToggle,
+    this.matchResult,
   });
 
   final Job job;
+  final JobMatchResult? matchResult;
   final VoidCallback onOpenDetails;
   final VoidCallback onApply;
   final VoidCallback onSaveToggle;
@@ -167,6 +173,11 @@ class _JobCardContentState extends State<_JobCardContent> {
             _InfoChip(icon: LucideIcons.wifi, label: workModeLabel(job.workMode)),
           ],
         ),
+        // ── Match percentage indicator ──
+        if (widget.matchResult != null && widget.matchResult!.shouldShow) ...[
+          const SizedBox(height: 12),
+          _MatchIndicator(result: widget.matchResult!),
+        ],
         const SizedBox(height: 14),
 
         // Show AI summary if available, otherwise cleaned raw description.
@@ -328,6 +339,85 @@ class _SkillTag extends StatelessWidget {
           color: AppColors.text(brightness),
         ),
       ),
+    );
+  }
+}
+
+class _MatchIndicator extends StatelessWidget {
+  const _MatchIndicator({required this.result});
+  final JobMatchResult result;
+
+  @override
+  Widget build(BuildContext context) {
+    final brightness = Theme.of(context).brightness;
+
+    return Row(
+      children: [
+        SizedBox(
+          width: 32,
+          height: 32,
+          child: Stack(
+            alignment: Alignment.center,
+            children: [
+              CircularProgressIndicator(
+                value: result.percentage / 100,
+                strokeWidth: 3,
+                backgroundColor: AppColors.stroke(brightness),
+                valueColor: AlwaysStoppedAnimation(result.color),
+              ),
+              Text(
+                '${result.percentage}',
+                style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                  fontWeight: FontWeight.w800,
+                  fontSize: 10,
+                  color: result.color,
+                ),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(width: 10),
+        Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              '${result.percentage}% Match',
+              style: Theme.of(context).textTheme.labelMedium?.copyWith(
+                fontWeight: FontWeight.w700,
+                color: result.color,
+              ),
+            ),
+            Text(
+              result.label,
+              style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                color: AppColors.subtext(brightness),
+              ),
+            ),
+          ],
+        ),
+        const Spacer(),
+        if (result.matchedSkills.isNotEmpty)
+          ...result.matchedSkills.take(3).map(
+            (skill) => Padding(
+              padding: const EdgeInsets.only(left: 6),
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(999),
+                  color: result.color.withValues(alpha: 0.12),
+                ),
+                child: Text(
+                  skill,
+                  style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                    color: result.color,
+                    fontWeight: FontWeight.w600,
+                    fontSize: 10,
+                  ),
+                ),
+              ),
+            ),
+          ),
+      ],
     );
   }
 }

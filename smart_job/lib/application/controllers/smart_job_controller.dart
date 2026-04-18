@@ -9,6 +9,7 @@ import '../../domain/models/job.dart';
 import '../../domain/models/message.dart';
 import '../../domain/models/profile.dart';
 import '../../services/job_api_service.dart';
+import '../../services/job_match_service.dart';
 import '../../services/job_cache_service.dart';
 import '../../services/supabase_data_service.dart';
 
@@ -281,18 +282,21 @@ class SmartJobController extends Notifier<SmartJobState> {
   void _mergeExternalJobs(List<Job> apiJobs) {
     // Build a map of existing jobs so we can preserve user interaction state.
     final existingById = {for (final j in state.jobs) j.id: j};
-    final userSkills = state.profile.skills;
+    final profile = state.profile;
 
-    // Calculate real skill-based match scores for API jobs.
+    // Calculate real match scores using the full profile, not just skills.
     final scoredApiJobs = apiJobs.map((job) {
-      final score = JobApiService.calculateMatchScore(job, userSkills);
-      return job.copyWith(matchScore: score);
+      final result = JobMatchService.calculate(profile, job);
+      return job.copyWith(matchScore: result.percentage / 100.0);
     }).toList();
 
     final merged = <Job>[
       // Preserve existing API jobs that the user interacted with.
       for (final existing in state.jobs)
-        if (existing.isSaved || existing.feedback != JobFeedback.none) existing,
+        if (existing.isSaved || existing.feedback != JobFeedback.none)
+          existing.copyWith(
+            matchScore: JobMatchService.calculate(profile, existing).percentage / 100.0,
+          ),
       // Add new API jobs that don't already exist.
       for (final apiJob in scoredApiJobs)
         if (!existingById.containsKey(apiJob.id)) apiJob,
@@ -441,6 +445,7 @@ class SmartJobController extends Notifier<SmartJobState> {
       (profile) => profile.copyWith(privacyModeEnabled: enabled),
       autosaveLabel: 'Privacy mode updated',
     );
+    _syncPrivacyToSupabase();
   }
 
   void updateCvTemplate(String templateName) {
@@ -682,6 +687,7 @@ class SmartJobController extends Notifier<SmartJobState> {
       (profile) => profile.copyWith(publicProfileEnabled: enabled),
       autosaveLabel: 'Public profile preferences updated',
     );
+    _syncPrivacyToSupabase();
   }
 
   void updateHideContactInfo(bool enabled) {
@@ -689,6 +695,7 @@ class SmartJobController extends Notifier<SmartJobState> {
       (profile) => profile.copyWith(hideContactInfo: enabled),
       autosaveLabel: 'Contact visibility updated',
     );
+    _syncPrivacyToSupabase();
   }
 
   void updateJobPreferences({
@@ -893,6 +900,15 @@ class SmartJobController extends Notifier<SmartJobState> {
       previousEmail: previousEmail,
     );
     state = nextState;
+  }
+
+  void _syncPrivacyToSupabase() {
+    final p = state.profile;
+    SupabaseDataService.updatePrivacySettings(
+      isPublic: p.publicProfileEnabled,
+      hideContactInfo: p.hideContactInfo,
+      privacyMode: p.privacyModeEnabled,
+    ).catchError((_) {});
   }
 
   SmartJobAccountData _accountDataFromState(SmartJobState source) {

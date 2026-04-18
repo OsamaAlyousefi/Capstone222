@@ -1,11 +1,14 @@
 ﻿import 'package:flutter/material.dart';
 import 'package:flutter_animate/flutter_animate.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 import 'package:lucide_icons/lucide_icons.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../../application/controllers/smart_job_controller.dart';
+import '../../router/app_router.dart';
 import '../../domain/models/job.dart';
+import '../../services/job_match_service.dart';
 import '../../services/job_summary_service.dart';
 import '../../services/supabase_data_service.dart';
 import '../../theme/app_colors.dart';
@@ -24,6 +27,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
   bool _hasSearched = false;
   bool _isLoadingJobs = false;
   bool _isLoadingSlow = false;
+  bool _sortByMatch = true; // true = Best Match, false = Most Recent
 
   @override
   void initState() {
@@ -77,8 +81,9 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
     final filteredJobs = ref.watch(filteredJobsProvider);
     final savedJobs = ref.watch(savedJobsProvider);
 
-    final jobsFeed = [...filteredJobs]
-      ..sort((a, b) {
+    final jobsFeed = [...filteredJobs];
+    if (_sortByMatch) {
+      jobsFeed.sort((a, b) {
         final aScore = a.matchScore +
             (a.isSaved ? 0.08 : 0) +
             (a.feedback == JobFeedback.interested ? 0.12 : 0) -
@@ -89,6 +94,8 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
             (b.feedback == JobFeedback.notInterested ? 0.12 : 0);
         return bScore.compareTo(aScore);
       });
+    }
+    // "Most Recent" keeps the API order (newest first by default).
 
     final activeFilters = _activeFilters(state);
 
@@ -269,10 +276,66 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                 label: const Text('Retry'),
               ),
             )
-          else
+          else ...[
+            if (!JobMatchService.hasProfileData(profile))
+              Padding(
+                padding: const EdgeInsets.only(bottom: 14),
+                child: Material(
+                  color: Colors.transparent,
+                  child: InkWell(
+                    onTap: () => context.go(AppRoute.cv),
+                    borderRadius: BorderRadius.circular(18),
+                    child: Ink(
+                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+                      decoration: BoxDecoration(
+                        borderRadius: BorderRadius.circular(18),
+                        color: AppColors.info.withValues(alpha: 0.10),
+                        border: Border.all(color: AppColors.info.withValues(alpha: 0.25)),
+                      ),
+                      child: Row(
+                        children: [
+                          Icon(LucideIcons.sparkles, size: 18, color: AppColors.info),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: Text(
+                              'Complete your CV to see how well you match each job',
+                              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                                color: AppColors.info,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ),
+                          Icon(LucideIcons.chevronRight, size: 16, color: AppColors.info),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            // ── Sort toggle ──
+            Row(
+              children: [
+                Text(
+                  '${jobsFeed.length} jobs',
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    color: AppColors.subtext(Theme.of(context).brightness),
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                const Spacer(),
+                _SortToggle(
+                  sortByMatch: _sortByMatch,
+                  onChanged: (v) => setState(() => _sortByMatch = v),
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
             for (final job in jobsFeed) ...[
               JobCard(
                 job: job,
+                matchResult: JobMatchService.hasProfileData(profile)
+                    ? JobMatchService.calculate(profile, job)
+                    : null,
                 onOpenDetails: () => _openJobDetails(context, job.id),
                 onApply: () => _applyForJob(context, ref, job),
                 onSaveToggle: () => _toggleSaveJob(context, ref, job),
@@ -281,6 +344,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
               ).animate().fade(delay: 160.ms).slideY(begin: 0.03),
               const SizedBox(height: 14),
             ],
+          ],
         ],
       ),
     );
@@ -604,6 +668,95 @@ class _FilterChoiceChip extends StatelessWidget {
       label: label,
       selected: selected,
       onTap: onTap,
+    );
+  }
+}
+
+class _SortToggle extends StatelessWidget {
+  const _SortToggle({
+    required this.sortByMatch,
+    required this.onChanged,
+  });
+
+  final bool sortByMatch;
+  final ValueChanged<bool> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    final brightness = Theme.of(context).brightness;
+
+    return Container(
+      decoration: BoxDecoration(
+        color: AppColors.surfaceMuted(brightness),
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(color: AppColors.stroke(brightness)),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          _SortOption(
+            label: 'Best Match',
+            icon: LucideIcons.sparkles,
+            selected: sortByMatch,
+            onTap: () => onChanged(true),
+          ),
+          _SortOption(
+            label: 'Most Recent',
+            icon: LucideIcons.clock,
+            selected: !sortByMatch,
+            onTap: () => onChanged(false),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _SortOption extends StatelessWidget {
+  const _SortOption({
+    required this.label,
+    required this.icon,
+    required this.selected,
+    required this.onTap,
+  });
+
+  final String label;
+  final IconData icon;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final brightness = Theme.of(context).brightness;
+
+    return GestureDetector(
+      onTap: onTap,
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 200),
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+        decoration: BoxDecoration(
+          color: selected ? AppColors.midnight : Colors.transparent,
+          borderRadius: BorderRadius.circular(999),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(
+              icon,
+              size: 13,
+              color: selected ? Colors.white : AppColors.subtext(brightness),
+            ),
+            const SizedBox(width: 5),
+            Text(
+              label,
+              style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                color: selected ? Colors.white : AppColors.subtext(brightness),
+                fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }

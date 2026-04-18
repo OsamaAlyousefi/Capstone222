@@ -5,6 +5,7 @@ import 'package:url_launcher/url_launcher.dart';
 
 import '../../application/controllers/smart_job_controller.dart';
 import '../../domain/models/job.dart';
+import '../../services/job_match_service.dart';
 import '../../services/supabase_data_service.dart';
 import '../../theme/app_colors.dart';
 import '../shared/widgets/smart_job_ui.dart';
@@ -176,6 +177,12 @@ class JobDetailsScreen extends ConsumerWidget {
                     title: 'Requirements',
                     child: _BulletList(items: _requirements(job, suggestedSkills)),
                   ),
+                  if (JobMatchService.hasProfileData(profile)) ...[
+                    const SizedBox(height: 16),
+                    _MatchBreakdownSection(
+                      result: JobMatchService.calculate(profile, job),
+                    ),
+                  ],
                   const SizedBox(height: 16),
                   _DetailsSection(
                     icon: LucideIcons.sparkles,
@@ -829,6 +836,243 @@ class _MetaChip extends StatelessWidget {
                 ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+class _MatchBreakdownSection extends StatelessWidget {
+  const _MatchBreakdownSection({required this.result});
+  final JobMatchResult result;
+
+  @override
+  Widget build(BuildContext context) {
+    final brightness = Theme.of(context).brightness;
+
+    if (!result.shouldShow) return const SizedBox.shrink();
+
+    return SmartJobPanel(
+      radius: 24,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              SizedBox(
+                width: 48,
+                height: 48,
+                child: Stack(
+                  alignment: Alignment.center,
+                  children: [
+                    CircularProgressIndicator(
+                      value: result.percentage / 100,
+                      strokeWidth: 4,
+                      backgroundColor: AppColors.stroke(brightness),
+                      valueColor: AlwaysStoppedAnimation(result.color),
+                    ),
+                    Text(
+                      '${result.percentage}%',
+                      style: Theme.of(context).textTheme.labelMedium?.copyWith(
+                        fontWeight: FontWeight.w800,
+                        color: result.color,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 14),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      result.label,
+                      style: Theme.of(context).textTheme.headlineMedium?.copyWith(
+                        color: result.color,
+                      ),
+                    ),
+                    Text(
+                      'Based on your CV and profile data',
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        color: AppColors.subtext(brightness),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 18),
+          _BreakdownRow(
+            label: 'Skills',
+            detail: result.matchedSkills.isEmpty
+                ? 'No overlap'
+                : '${result.matchedSkills.length} matched',
+            value: result.skillsScore,
+            color: result.color,
+            brightness: brightness,
+          ),
+          const SizedBox(height: 10),
+          _BreakdownRow(
+            label: 'Title',
+            detail: result.titleScore >= 0.6
+                ? 'Strong overlap'
+                : result.titleScore >= 0.3
+                    ? 'Some overlap'
+                    : 'Low overlap',
+            value: result.titleScore,
+            color: result.color,
+            brightness: brightness,
+          ),
+          const SizedBox(height: 10),
+          _BreakdownRow(
+            label: 'Location',
+            detail: result.locationScore >= 0.9
+                ? 'Exact match'
+                : result.locationScore >= 0.6
+                    ? 'Good match'
+                    : 'Partial',
+            value: result.locationScore,
+            color: result.color,
+            brightness: brightness,
+          ),
+          const SizedBox(height: 10),
+          _BreakdownRow(
+            label: 'Experience',
+            detail: result.experienceScore >= 0.9
+                ? 'Great fit'
+                : result.experienceScore >= 0.5
+                    ? 'Good fit'
+                    : 'Gap',
+            value: result.experienceScore,
+            color: result.color,
+            brightness: brightness,
+          ),
+          if (result.matchedSkills.isNotEmpty) ...[
+            const SizedBox(height: 16),
+            Text(
+              'Matched skills',
+              style: Theme.of(context).textTheme.labelMedium?.copyWith(
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+            const SizedBox(height: 8),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: result.matchedSkills.map((s) => _MatchChip(
+                label: s,
+                color: AppColors.success,
+                brightness: brightness,
+              )).toList(),
+            ),
+          ],
+          if (result.missingSkills.isNotEmpty) ...[
+            const SizedBox(height: 14),
+            Text(
+              'Consider adding these skills',
+              style: Theme.of(context).textTheme.labelMedium?.copyWith(
+                fontWeight: FontWeight.w700,
+                color: AppColors.subtext(brightness),
+              ),
+            ),
+            const SizedBox(height: 8),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: result.missingSkills.take(6).map((s) => _MatchChip(
+                label: s,
+                color: AppColors.subtext(brightness),
+                brightness: brightness,
+              )).toList(),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class _BreakdownRow extends StatelessWidget {
+  const _BreakdownRow({
+    required this.label,
+    required this.detail,
+    required this.value,
+    required this.color,
+    required this.brightness,
+  });
+
+  final String label;
+  final String detail;
+  final double value;
+  final Color color;
+  final Brightness brightness;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: [
+        SizedBox(
+          width: 80,
+          child: Text(
+            label,
+            style: Theme.of(context).textTheme.bodySmall?.copyWith(
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+        ),
+        Expanded(
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(4),
+            child: LinearProgressIndicator(
+              value: value.clamp(0.0, 1.0),
+              minHeight: 6,
+              backgroundColor: AppColors.stroke(brightness),
+              valueColor: AlwaysStoppedAnimation(color),
+            ),
+          ),
+        ),
+        const SizedBox(width: 12),
+        SizedBox(
+          width: 90,
+          child: Text(
+            detail,
+            textAlign: TextAlign.end,
+            style: Theme.of(context).textTheme.labelSmall?.copyWith(
+              color: AppColors.subtext(brightness),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _MatchChip extends StatelessWidget {
+  const _MatchChip({
+    required this.label,
+    required this.color,
+    required this.brightness,
+  });
+
+  final String label;
+  final Color color;
+  final Brightness brightness;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(999),
+        color: color.withValues(alpha: 0.12),
+      ),
+      child: Text(
+        label,
+        style: Theme.of(context).textTheme.labelSmall?.copyWith(
+          color: color,
+          fontWeight: FontWeight.w600,
+        ),
       ),
     );
   }
